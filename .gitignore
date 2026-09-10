@@ -1,0 +1,22 @@
+# ─── macOS / editores ───────────────────────────────────────────────
+.DS_Store
+._*
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ─── segredos, em qualquer nível ────────────────────────────────────
+# Rede de segurança. Cada subprojeto repete a regra localmente, mas um
+# .env criado num diretório novo não pode depender disso.
+.env
+.env.*
+!.env.example
+!.env.production
+
+# ─── artefatos ──────────────────────────────────────────────────────
+node_modules/
+dist/
+coverage/
+*.log

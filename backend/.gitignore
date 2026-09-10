@@ -1,0 +1,14 @@
+/bin/
+/tmp/
+*.test
+*.out
+coverage.html
+
+# Backups do banco: dumps reais do ledger e das conversas. Nunca versionar.
+/backups/
+
+# Todo .env é segredo, exceto o exemplo. `.env` sozinho não cobria
+# .env.local nem .env.prod, e um deles bastaria para vazar SECRETS_KEY.
+.env
+.env.*
+!.env.example
