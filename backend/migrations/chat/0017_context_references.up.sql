@@ -1,0 +1,77 @@
+-- What a conversation, and what a turn, is ABOUT.
+--
+-- ── Why this is a new column and not a reuse of turn_references ────────
+-- `turn_references` (migration 0016) holds the CAPABILITIES a user attached
+-- to one turn: its ids are tool names, and its only effect is to narrow the
+-- tools that turn declares. This holds ENTITIES: an opportunity, later a
+-- repository or a calendar event, and it changes no capability at all.
+--
+-- Putting both in one column would mean a reader could not tell a tool name
+-- from an entity id without knowing which kind it was looking at, and the
+-- code that intersects a selection with the agent's grants would have to
+-- learn to skip rows — which is one edit away from an entity id deciding
+-- which capabilities a turn exposes. Two columns, two meanings, no overlap.
+--
+-- ── Why BOTH tables ────────────────────────────────────────────────────
+-- Because the product has two genuinely different associations, and they
+-- are not substitutes:
+--
+--   conversations.context_references
+--     "this whole thread is about X". Written once, when a conversation is
+--     opened from an entity ("Conversar com Scout" from a Job Radar card).
+--     It is what makes the third message in the thread still able to say
+--     "essa vaga" without re-attaching anything, and what survives a reload
+--     and a reopen weeks later.
+--
+--   messages.context_references
+--     "this one turn is about X". Written per message, alongside the text.
+--     It is what a transcript needs in order to say, later, which subject a
+--     particular question was asked about.
+--
+-- One shape, two associations. A single table with a nullable message_id
+-- would have modelled the same thing with a join and an orphan risk, for
+-- data that is read whole, with its row, and never queried by its interior.
+--
+-- ── Why JSONB, on the same test migration 0016 applied ─────────────────
+--   Query     — never filtered, aggregated or joined by its interior. It is
+--               read whole, for one row, by whoever is already reading that
+--               row.
+--   Lifecycle — belongs to exactly one row and must die with it. Truncate
+--               and regenerate hard-delete a turn, and a column goes with
+--               the row for free: no cascade to get right, no orphan
+--               possible.
+--   Evolution — a new reference type is a change in the Go producer and in
+--               a resolver; with a table it would additionally be a
+--               migration and a join, for the same data.
+--
+-- ── What is NOT stored, and this is the load-bearing part ──────────────
+-- The entity. No stage, no salary, no notes, no snapshot of any kind. Only
+-- type, id and the words needed to recognise it.
+--
+-- A stored copy of the entity would be a second source of truth that starts
+-- lying the moment the row it copied is updated — and the whole point of a
+-- reference is that asking "how is this going?" next month reads the
+-- CURRENT state through the owning module's tools, not a photograph taken
+-- when the message was typed.
+--
+-- The label IS frozen, and that is not a contradiction: it is display text,
+-- it is what the chip said when it was attached, and a transcript that
+-- silently re-labelled itself would be rewriting the past. Availability is
+-- recomputed on read instead of stored, so an entity that comes back simply
+-- is available again.
+--
+-- ── No backfill ────────────────────────────────────────────────────────
+-- No conversation and no turn has ever carried one. NULL on every existing
+-- row is the true statement and goes on meaning exactly what it will mean:
+-- nothing was attached.
+--
+-- ── Why no CHECK on the shape ──────────────────────────────────────────
+-- The bound is by construction: domain.MaxContextReferences caps the count
+-- and every string is bounded in the domain type, so the worst case is a
+-- couple of kilobytes. A constraint here would report a producer that
+-- changed shape far too late and far too obscurely.
+ALTER TABLE chat.conversations
+    ADD COLUMN context_references JSONB;
+
+ALTER TABLE chat.messages
+    ADD COLUMN context_references JSONB;
