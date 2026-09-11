@@ -1,0 +1,354 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * C.O.R.S.I — Personal AI ecosystem · light + premium dark
+ *
+ * Theme architecture:
+ *   · @theme registers utility names with LIGHT defaults.
+ *   · .dark selector overrides surface tokens with premium graphite values.
+ *   · Body has a 400ms CSS transition on background-color and color so
+ *     theme switches feel native (Apple/Linear style — no hard flash).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* ── Type ──────────────────────────────────────────────────────────────── */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* ── Slate primitive ──────────────────────────────────────────────────── */
+  --color-slate-50:  #F8F8F9;
+  --color-slate-100: #EEEFF1;
+  --color-slate-200: #DEDFE3;
+  --color-slate-300: #C4C6CD;
+  --color-slate-400: #9B9EA7;
+  --color-slate-500: #6B6E78;
+  --color-slate-600: #5A5E68;
+  --color-slate-700: #44474F;
+  --color-slate-800: #363941;
+  --color-slate-900: #20232A;
+  --color-slate-950: #14161B;
+
+  /* ── Graphite primitive (premium dark surfaces) ───────────────────────── */
+  --color-graphite-50:  #ECEDEE;
+  --color-graphite-100: #C9CBCF;
+  --color-graphite-200: #A1A5AC;
+  --color-graphite-300: #717680;
+  --color-graphite-400: #4D5159;
+  --color-graphite-500: #3A3D44;
+  --color-graphite-600: #2A2C32;
+  --color-graphite-700: #1F2126;
+  --color-graphite-800: #18191D;
+  --color-graphite-900: #0F1012;
+  --color-graphite-950: #0A0B0D;
+
+  /* ── Brand primitive (warm orange — kept from light) ──────────────────── */
+  --color-brand-50:  #FFF4ED;
+  --color-brand-100: #FFE6D4;
+  --color-brand-200: #FFC9A8;
+  --color-brand-300: #FFA471;
+  --color-brand-400: #FF7C3D;
+  --color-brand-500: #E8742A;
+  --color-brand-600: #C95E1F;
+  --color-brand-700: #A14A1A;
+  --color-brand-800: #7A371A;
+  --color-brand-900: #5B2A18;
+
+  /* ── Semantic · LIGHT defaults ────────────────────────────────────────── */
+  --color-background: #F8F8F9;
+  --color-foreground: #2D2F36;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #2D2F36;
+  --color-primary: #363941;
+  --color-primary-foreground: #FFFFFF;
+  --color-muted: #EEEFF1;
+  --color-muted-foreground: #6B6E78;
+  --color-accent: #E8742A;
+  --color-accent-foreground: #FFFFFF;
+  --color-border: #DEDFE3;
+  --color-border-strong: #C4C6CD;
+  --color-input: #DEDFE3;
+  --color-ring: #E8742A;
+
+  --color-success: #1F8A4C;
+  --color-warning: #F5B301;
+  --color-info: #1E6FD9;
+  --color-destructive: #D83A3A;
+
+  /* ── Radii (ERP-exact) ────────────────────────────────────────────────── */
+  --radius-xs: 0.375rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease-premium: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-hover: 250ms;
+  --duration-card: 400ms;
+  --duration-section: 600ms;
+  --duration-hero: 800ms;
+
+  /* ── Shadows · LIGHT ─────────────────────────────────────────────────── */
+  --shadow-soft: 0 1px 2px rgb(20 22 27 / 0.04), 0 1px 3px rgb(20 22 27 / 0.05);
+  --shadow-card:
+    0 4px 12px -2px rgb(20 22 27 / 0.06),
+    0 2px 4px -2px rgb(20 22 27 / 0.04),
+    0 0 0 1px rgb(20 22 27 / 0.04);
+  --shadow-lift:
+    0 18px 40px -16px rgb(20 22 27 / 0.18),
+    0 8px 18px -10px rgb(20 22 27 / 0.12),
+    0 0 0 1px rgb(20 22 27 / 0.04);
+  --shadow-glow:
+    0 0 0 1px rgb(232 116 42 / 0.35),
+    0 12px 36px -8px rgb(232 116 42 / 0.45),
+    0 0 60px -10px rgb(232 116 42 / 0.35);
+
+  /* ── Animations ────────────────────────────────────────────────────────── */
+  --animate-blob: blob 18s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.8s linear infinite;
+  --animate-gradient-shift: gradient-shift 12s linear infinite;
+  --animate-dot-drift: dot-drift 60s linear infinite;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * DARK theme — premium graphite. Linear / Arc / Notion-leaning.
+ * Surfaces shift; brand color stays.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+.dark {
+  --color-background: #0F1012;
+  --color-foreground: #ECEDEE;
+  --color-card: #18191D;
+  --color-card-foreground: #ECEDEE;
+  --color-primary: #ECEDEE;
+  --color-primary-foreground: #0F1012;
+  --color-muted: #1F2126;
+  --color-muted-foreground: #A1A5AC;
+  --color-accent: #E8742A;
+  --color-accent-foreground: #0F1012;
+  --color-border: #26282E;
+  --color-border-strong: #3A3D44;
+  --color-input: #26282E;
+  --color-ring: #FF7C3D;
+
+  /* Slate shadow tints don't read on dark — re-tone for graphite */
+  --shadow-soft:
+    0 1px 0 rgb(255 255 255 / 0.03) inset,
+    0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-card:
+    inset 0 0 0 1px rgb(255 255 255 / 0.04),
+    0 1px 0 rgb(255 255 255 / 0.03) inset,
+    0 20px 60px -28px rgb(0 0 0 / 0.7);
+  --shadow-lift:
+    inset 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 24px 60px -20px rgb(0 0 0 / 0.8),
+    0 0 60px -20px rgb(232 116 42 / 0.18);
+  --shadow-glow:
+    0 0 0 1px rgb(255 124 61 / 0.45),
+    0 12px 36px -8px rgb(232 116 42 / 0.45),
+    0 0 60px -10px rgb(255 124 61 / 0.35);
+}
+
+/* Keyframes */
+@keyframes blob {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(40px, -30px, 0) scale(1.06); }
+  66%      { transform: translate3d(-30px, 25px, 0) scale(0.96); }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes dot-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 22px 22px; }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
+  *, ::before, ::after { border-color: var(--color-border); }
+
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    color-scheme: light;
+  }
+  html.dark { color-scheme: dark; }
+
+  html, body, #root { min-height: 100%; }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    transition:
+      background-color 400ms var(--ease-premium),
+      color 400ms var(--ease-premium);
+  }
+
+  ::selection {
+    background-color: rgb(232 116 42 / 0.22);
+    color: var(--color-foreground);
+  }
+}
+
+@utility container-page {
+  margin-inline: auto;
+  max-width: 80rem;
+  padding-inline: 1rem;
+  @media (min-width: 768px) { padding-inline: 1.5rem; }
+  @media (min-width: 1024px) { padding-inline: 2rem; }
+}
+
+@utility eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-brand-600);
+}
+
+@utility dot-grid {
+  background-image: radial-gradient(rgb(20 22 27 / 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@utility dot-grid-dark {
+  background-image: radial-gradient(rgb(255 255 255 / 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@utility dot-grid-drift {
+  animation: var(--animate-dot-drift);
+}
+
+@utility text-brand-gradient {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-brand-300),
+    var(--color-brand-500) 35%,
+    var(--color-brand-700) 60%,
+    var(--color-brand-500) 80%,
+    var(--color-brand-300)
+  );
+  background-size: 220% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: var(--animate-gradient-shift);
+}
+
+@utility shine-on-hover {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.shine-on-hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgb(255 255 255 / 0) 30%,
+    rgb(255 255 255 / 0.32) 50%,
+    rgb(255 255 255 / 0) 70%,
+    transparent 100%
+  );
+  transform: translateX(-120%) skewX(-12deg);
+  pointer-events: none;
+  z-index: 1;
+}
+.shine-on-hover:hover::after { animation: shine 1.4s var(--ease-premium); }
+@keyframes shine {
+  from { transform: translateX(-120%) skewX(-12deg); }
+  to   { transform: translateX(260%) skewX(-12deg); }
+}
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-mono    { font-family: var(--font-mono); }
+  .text-balance { text-wrap: balance; }
+  .text-pretty  { text-wrap: pretty; }
+  .tabular      { font-variant-numeric: tabular-nums; }
+
+  .animate-pulse-soft { animation: pulse-soft 2.4s ease-in-out infinite; }
+  .animate-blob       { animation: var(--animate-blob); }
+
+  /* Text that reads as "working": a highlight sweeping across the glyphs,
+     reusing the existing shimmer keyframe. Drives the agent's thinking
+     state, where a spinner would say less than the label itself. */
+  .text-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-muted-foreground) 0%,
+      var(--color-muted-foreground) 40%,
+      var(--color-foreground)       50%,
+      var(--color-muted-foreground) 60%,
+      var(--color-muted-foreground) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 2.2s linear infinite;
+  }
+  /* The global reduce-motion rule freezes the sweep but leaves the text
+     painted from a clipped gradient. Hand it back a solid color so it
+     never depends on a paused animation to stay readable. */
+  @media (prefers-reduced-motion: reduce) {
+    .text-shimmer {
+      background-image: none;
+      color: var(--color-muted-foreground);
+    }
+  }
+
+  /* Surface that has theme-aware background + border + transition */
+  .surface-card {
+    background-color: var(--color-card);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+    transition:
+      background-color 400ms var(--ease-premium),
+      border-color 400ms var(--ease-premium),
+      box-shadow 400ms var(--ease-premium);
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition:
+      opacity 900ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity, transform;
+  }
+  .reveal[data-visible="true"] {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
