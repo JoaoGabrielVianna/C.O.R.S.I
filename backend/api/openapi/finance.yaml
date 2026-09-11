@@ -1,0 +1,809 @@
+openapi: 3.0.3
+info:
+  title: C.O.R.S.I Finance API
+  version: 0.1.0
+  description: |
+    Finance bounded context of the C.O.R.S.I modular monolith.
+    Schema-first; this file is the contract.
+    Auth: owned by an external service (separate repo). This API has no
+    auth guard of its own. Workspace context is read from the
+    `X-Workspace-Id` header. When the server runs with
+    `WORKSPACE_REQUIRE_HEADER=true` (production), a missing header
+    returns `401 workspace_required`. A malformed header always returns
+    `400 workspace_invalid`.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: health
+  - name: finance
+  - name: categories
+  - name: transactions
+  - name: transfers
+  - name: cards
+  - name: persons
+  - name: purchase-plans
+paths:
+  /health/live:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      responses:
+        '200': { description: alive, content: { application/json: { schema: { $ref: '#/components/schemas/Status' } } } }
+  /health/ready:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      responses:
+        '200': { description: ready,    content: { application/json: { schema: { $ref: '#/components/schemas/Status' } } } }
+        '503': { description: not ready }
+
+  /finance/ping:
+    get:
+      tags: [finance]
+      summary: Module heartbeat
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ModuleStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /finance/categories:
+    get:
+      tags: [categories]
+      summary: List categories
+      parameters:
+        - { in: query, name: type,   schema: { $ref: '#/components/schemas/EntryType' } }
+        - { in: query, name: limit,  schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: page of categories
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Category' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [categories]
+      summary: Create a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryCreate' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /finance/categories/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [categories]
+      summary: Get a category
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [categories]
+      summary: Update a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryUpdate' }
+      responses:
+        '200': { description: updated, content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [categories]
+      summary: Soft-delete a category
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /finance/transactions:
+    get:
+      tags: [transactions]
+      summary: List transactions
+      description: |
+        Supports both offset and cursor pagination. `cursor` and `offset`
+        are mutually exclusive — sending both is rejected with 400.
+        For new clients the cursor mode is recommended: pass the
+        `next_cursor` from the previous response back as `?cursor=…`
+        until the response carries `next_cursor: null`.
+      parameters:
+        - { in: query, name: type,     schema: { $ref: '#/components/schemas/EntryType' } }
+        - { in: query, name: category, schema: { type: string, format: uuid } }
+        - { in: query, name: status,   schema: { $ref: '#/components/schemas/TransactionStatus' } }
+        - { in: query, name: from,     schema: { type: string, format: date-time } }
+        - { in: query, name: to,       schema: { type: string, format: date-time } }
+        - { in: query, name: limit,    schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset,   schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: cursor,   schema: { type: string }, description: "Opaque pagination cursor from a prior response's next_cursor. Mutually exclusive with offset." }
+      responses:
+        '200':
+          description: page of transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:       { type: array, items: { $ref: '#/components/schemas/Transaction' } }
+                      next_cursor:
+                        type: string
+                        nullable: true
+                        description: "Opaque cursor pointing at the next page; null when there are no more results."
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /finance/transactions/totals:
+    get:
+      tags: [transactions]
+      summary: Aggregated totals over a window
+      description: |
+        Returns per-status / per-category / per-method aggregations for
+        the workspace inside the half-open `[from, to)` window. Dashboards
+        use this so they don't have to iterate the transactions page-by-page.
+        The window must be ≤ 366 days.
+      parameters:
+        - { in: query, name: from, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: aggregated totals
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionTotals' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [transactions]
+      summary: Create a transaction
+      description: |
+        Type is derived server-side from the referenced category. A
+        composite FK on (category_id, type) enforces consistency at the DB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionCreate' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/transactions/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [transactions]
+      summary: Get a transaction
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [transactions]
+      summary: Update a transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionUpdate' }
+      responses:
+        '200': { description: updated, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [transactions]
+      summary: Soft-delete a transaction
+      description: |
+        Rejects with `409 conflict` when the target row is one leg of a
+        transfer (`transfer_pair_id` is set). Transfers must be deleted as
+        a pair via `DELETE /finance/transfers/{pair_id}` so the two legs
+        always stay in sync.
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /finance/transfers:
+    post:
+      tags: [transfers]
+      summary: Create a transfer (two transactions atomically)
+      description: |
+        Writes two `finance.transactions` rows sharing the same
+        `transfer_pair_id` inside a single transaction. The `from` leg
+        must reference an expense category; the `to` leg an income
+        category. Both legs are excluded from `/finance/transactions/totals`
+        aggregates so an account-to-account move never shifts dashboard
+        totals (see `docs/totals-contract.md`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferCreate' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/transfers/{pair_id}:
+    parameters:
+      - { in: path, name: pair_id, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [transfers]
+      summary: Soft-delete a transfer (both legs atomically)
+      description: |
+        Soft-deletes every live row sharing `pair_id` inside the workspace
+        in a single transaction. Use this instead of `DELETE
+        /finance/transactions/{id}` for transfer legs — the per-transaction
+        endpoint rejects leg ids with `409` to keep the pair invariant.
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /finance/cards:
+    get:
+      tags: [cards]
+      summary: List cards
+      parameters:
+        - { in: query, name: limit,  schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: page of cards
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Card' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [cards]
+      summary: Create a card
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CardCreate' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Card' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /finance/cards/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [cards]
+      summary: Get a card
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Card' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [cards]
+      summary: Update a card
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CardUpdate' }
+      responses:
+        '200': { description: updated, content: { application/json: { schema: { $ref: '#/components/schemas/Card' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [cards]
+      summary: Archive a card (soft delete)
+      responses:
+        '204': { description: archived }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /finance/persons:
+    get:
+      tags: [persons]
+      summary: List persons
+      parameters:
+        - { in: query, name: limit,  schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: page of persons
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Person' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [persons]
+      summary: Create a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonCreate' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /finance/persons/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [persons]
+      summary: Get a person
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [persons]
+      summary: Update a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonUpdate' }
+      responses:
+        '200': { description: updated, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [persons]
+      summary: Soft-delete a person
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /finance/purchase-plans:
+    get:
+      tags: [purchase-plans]
+      summary: List purchase plans
+      parameters:
+        - { in: query, name: limit,  schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: page of purchase plans
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/PurchasePlan' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [purchase-plans]
+      summary: Create a purchase plan and its installment transactions
+      description: |
+        Atomically writes the parent plan row plus N installment
+        transactions inside a single transaction. Each installment is an
+        ordinary `finance.transactions` row tagged with `plan_id` and
+        `installment_number` (1..N). All installments are created with
+        `status = scheduled` and `occurred_at` evenly spaced one month
+        apart starting from `first_occurred_at`. The principal is split
+        evenly; the last installment absorbs the rounding remainder so
+        sum(installment_amount) equals `total_amount_cents` exactly.
+
+        Per `docs/totals-contract.md` §3 the installments are bucketed
+        individually (REALIZED once paid, PROJECTED while scheduled).
+        There is no plan-level total — sum the installment rows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurchasePlanCreate' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/PurchasePlan' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/purchase-plans/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [purchase-plans]
+      summary: Get a purchase plan
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/PurchasePlan' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/purchase-plans/{id}/cancel:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [purchase-plans]
+      summary: Cancel the future (still-scheduled) installments of a plan
+      description: |
+        Soft-deletes every installment of the plan whose status is
+        `scheduled` and recomputes `remaining_installments` from the live
+        non-paid count, in a single transaction. Paid installments are
+        preserved as history per `docs/totals-contract.md` §5.4: the
+        REALIZED side of a plan never retroactively disappears. The plan
+        record itself stays live so historical rows can still resolve
+        their `plan_id` reference.
+      responses:
+        '200': { description: cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/PurchasePlan' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  responses:
+    BadRequest:    { description: invalid input,                  content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    Unauthorized:  { description: workspace header required,      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    NotFound:      { description: not found,                      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    Conflict:      { description: conflict,                       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  schemas:
+    Status:
+      type: object
+      required: [status]
+      properties: { status: { type: string } }
+    ModuleStatus:
+      type: object
+      required: [module, status]
+      properties:
+        module: { type: string }
+        status: { type: string }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    { type: string }
+            message: { type: string }
+    Page:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        limit:  { type: integer }
+        offset: { type: integer }
+    EntryType:
+      type: string
+      enum: [income, expense]
+    CardNetwork:
+      type: string
+      enum: [visa, mastercard, elo, amex]
+    TransactionStatus:
+      type: string
+      enum: [paid, pending, scheduled]
+    PaymentMethod:
+      type: string
+      enum: [debit, credit, pix, cash, transfer]
+    TransactionSource:
+      type: string
+      enum: [manual, whatsapp, import, ai]
+
+    Category:
+      type: object
+      required: [id, workspace_id, name, type, color, icon, created_at, updated_at]
+      properties:
+        id:           { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name:         { type: string, minLength: 1, maxLength: 80 }
+        type:         { $ref: '#/components/schemas/EntryType' }
+        color:        { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        icon:         { type: string, minLength: 1, maxLength: 40 }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+        deleted_at:   { type: string, format: date-time, nullable: true }
+    CategoryCreate:
+      type: object
+      required: [name, type, color, icon]
+      properties:
+        name:  { type: string, minLength: 1, maxLength: 80 }
+        type:  { $ref: '#/components/schemas/EntryType' }
+        color: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        icon:  { type: string, minLength: 1, maxLength: 40 }
+    CategoryUpdate:
+      type: object
+      properties:
+        name:  { type: string, minLength: 1, maxLength: 80 }
+        color: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        icon:  { type: string, minLength: 1, maxLength: 40 }
+
+    Transaction:
+      type: object
+      required: [id, workspace_id, category_id, type, amount_cents, description, occurred_at, status, payment_method, source, notes, created_at, updated_at]
+      properties:
+        id:             { type: string, format: uuid }
+        workspace_id:   { type: string, format: uuid }
+        account_id:     { type: string, format: uuid, nullable: true }
+        category_id:    { type: string, format: uuid }
+        type:           { $ref: '#/components/schemas/EntryType' }
+        person_id:      { type: string, format: uuid, nullable: true }
+        amount_cents:   { type: integer, format: int64, minimum: 1 }
+        description:    { type: string, maxLength: 280 }
+        occurred_at:    { type: string, format: date-time }
+        status:         { $ref: '#/components/schemas/TransactionStatus' }
+        payment_method: { $ref: '#/components/schemas/PaymentMethod' }
+        source:         { $ref: '#/components/schemas/TransactionSource' }
+        notes:          { type: string, maxLength: 1000 }
+        transfer_pair_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Non-null when this row is one leg of a transfer (both legs of
+            a pair share the same uuid). Transfer legs are excluded from
+            `/finance/transactions/totals` aggregates and cannot be
+            deleted via `DELETE /finance/transactions/{id}` — use
+            `DELETE /finance/transfers/{pair_id}` instead.
+        plan_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Non-null when this row is an installment of a PurchasePlan.
+            Paired with `installment_number` (1..N). Per
+            `docs/totals-contract.md` §3 each installment is bucketed
+            individually — there is no plan-level shortcut.
+        installment_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: 1-indexed position of this installment inside its PurchasePlan.
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+        deleted_at:     { type: string, format: date-time, nullable: true }
+    TransactionCreate:
+      type: object
+      required: [category_id, amount_cents, occurred_at]
+      description: |
+        Metadata fields (status, payment_method, source, notes) default to
+        `paid` / `pix` / `manual` / `""` when omitted, so older clients keep
+        working unchanged.
+      properties:
+        account_id:     { type: string, format: uuid, nullable: true }
+        category_id:    { type: string, format: uuid }
+        person_id:      { type: string, format: uuid, nullable: true }
+        amount_cents:   { type: integer, format: int64, minimum: 1 }
+        description:    { type: string, maxLength: 280, default: '' }
+        occurred_at:    { type: string, format: date-time }
+        status:         { $ref: '#/components/schemas/TransactionStatus' }
+        payment_method: { $ref: '#/components/schemas/PaymentMethod' }
+        source:         { $ref: '#/components/schemas/TransactionSource' }
+        notes:          { type: string, maxLength: 1000 }
+    TransactionTotals:
+      type: object
+      required: [window, by_status, by_realization, by_category, by_method]
+      properties:
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to:   { type: string, format: date-time }
+        by_status:
+          type: object
+          description: "Sums and counts bucketed by raw status. All three keys are always present. Kept for filter-driven callers — dashboards must consume `by_realization` instead."
+          required: [paid, pending, scheduled]
+          properties:
+            paid:      { $ref: '#/components/schemas/TotalsBucket' }
+            pending:   { $ref: '#/components/schemas/TotalsBucket' }
+            scheduled: { $ref: '#/components/schemas/TotalsBucket' }
+        by_realization:
+          type: object
+          description: |
+            Canonical dashboard grouping defined in
+            `docs/totals-contract.md`. Every consumer that needs
+            "available money" / "expected cashflow" semantics must read
+            these buckets — not `by_status`. All three keys are always
+            present.
+
+            - `realized`:  `status='paid' AND occurred_at <= now()`
+            - `projected`: pending / scheduled / future-dated paid
+            - `excluded`:  transfer legs (any status, any date)
+          required: [realized, projected, excluded]
+          properties:
+            realized:  { $ref: '#/components/schemas/TotalsBucket' }
+            projected: { $ref: '#/components/schemas/TotalsBucket' }
+            excluded:  { $ref: '#/components/schemas/TotalsBucket' }
+        by_category:
+          type: array
+          items:
+            type: object
+            required: [category_id, type, total_cents, count]
+            properties:
+              category_id: { type: string, format: uuid }
+              type:        { $ref: '#/components/schemas/EntryType' }
+              total_cents: { type: integer, format: int64 }
+              count:       { type: integer, format: int64 }
+        by_method:
+          type: array
+          items:
+            type: object
+            required: [payment_method, total_cents, count]
+            properties:
+              payment_method: { $ref: '#/components/schemas/PaymentMethod' }
+              total_cents:    { type: integer, format: int64 }
+              count:          { type: integer, format: int64 }
+    TotalsBucket:
+      type: object
+      required: [income_cents, expense_cents, count]
+      properties:
+        income_cents:  { type: integer, format: int64 }
+        expense_cents: { type: integer, format: int64 }
+        count:         { type: integer, format: int64 }
+    TransferCreate:
+      type: object
+      required: [from_category_id, to_category_id, amount_cents, occurred_at]
+      description: |
+        Both categories must already exist in the workspace. The `from`
+        category must be `expense`, the `to` category `income`. The
+        server forces `payment_method=transfer` and `status=paid` on
+        both legs.
+      properties:
+        from_category_id: { type: string, format: uuid }
+        to_category_id:   { type: string, format: uuid }
+        from_account_id:  { type: string, format: uuid, nullable: true }
+        to_account_id:    { type: string, format: uuid, nullable: true }
+        amount_cents:     { type: integer, format: int64, minimum: 1 }
+        occurred_at:      { type: string, format: date-time }
+        description:      { type: string, maxLength: 280, default: '' }
+        notes:            { type: string, maxLength: 1000, nullable: true }
+    TransferPair:
+      type: object
+      required: [from, to]
+      description: |
+        The two legs of a transfer, returned together. Both rows share
+        the same `transfer_pair_id`; the `from` leg is the expense
+        outflow and `to` is the income inflow.
+      properties:
+        from: { $ref: '#/components/schemas/Transaction' }
+        to:   { $ref: '#/components/schemas/Transaction' }
+    TransactionUpdate:
+      type: object
+      description: |
+        Pointer-style PATCH. Omit a field to leave it untouched. To unset a
+        nullable foreign key, set `clear_account_id` / `clear_person_id` to true.
+      properties:
+        account_id:       { type: string, format: uuid, nullable: true }
+        clear_account_id: { type: boolean }
+        category_id:      { type: string, format: uuid }
+        person_id:        { type: string, format: uuid, nullable: true }
+        clear_person_id:  { type: boolean }
+        amount_cents:     { type: integer, format: int64, minimum: 1 }
+        description:      { type: string, maxLength: 280 }
+        occurred_at:      { type: string, format: date-time }
+        status:           { $ref: '#/components/schemas/TransactionStatus' }
+        payment_method:   { $ref: '#/components/schemas/PaymentMethod' }
+        source:           { $ref: '#/components/schemas/TransactionSource' }
+        notes:            { type: string, maxLength: 1000 }
+
+    Card:
+      type: object
+      required: [id, workspace_id, name, institution, network, last4, limit_cents, closing_day, due_day, created_at, updated_at]
+      properties:
+        id:           { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name:         { type: string, minLength: 1, maxLength: 80 }
+        institution:  { type: string, minLength: 1, maxLength: 80 }
+        network:      { $ref: '#/components/schemas/CardNetwork' }
+        variant:      { type: string, maxLength: 40 }
+        last4:        { type: string, pattern: '^[0-9]{4}$' }
+        limit_cents:  { type: integer, format: int64, minimum: 0 }
+        closing_day:  { type: integer, minimum: 1, maximum: 28 }
+        due_day:      { type: integer, minimum: 1, maximum: 28 }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+        deleted_at:   { type: string, format: date-time, nullable: true }
+    CardCreate:
+      type: object
+      required: [name, institution, network, last4, limit_cents, closing_day, due_day]
+      properties:
+        name:        { type: string, minLength: 1, maxLength: 80 }
+        institution: { type: string, minLength: 1, maxLength: 80 }
+        network:     { $ref: '#/components/schemas/CardNetwork' }
+        variant:     { type: string, maxLength: 40, default: '' }
+        last4:       { type: string, pattern: '^[0-9]{4}$' }
+        limit_cents: { type: integer, format: int64, minimum: 0 }
+        closing_day: { type: integer, minimum: 1, maximum: 28 }
+        due_day:     { type: integer, minimum: 1, maximum: 28 }
+    CardUpdate:
+      type: object
+      properties:
+        name:        { type: string, minLength: 1, maxLength: 80 }
+        institution: { type: string, minLength: 1, maxLength: 80 }
+        network:     { $ref: '#/components/schemas/CardNetwork' }
+        variant:     { type: string, maxLength: 40 }
+        last4:       { type: string, pattern: '^[0-9]{4}$' }
+        limit_cents: { type: integer, format: int64, minimum: 0 }
+        closing_day: { type: integer, minimum: 1, maximum: 28 }
+        due_day:     { type: integer, minimum: 1, maximum: 28 }
+
+    Person:
+      type: object
+      required: [id, workspace_id, name, notes, created_at, updated_at]
+      properties:
+        id:           { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name:         { type: string, minLength: 1, maxLength: 80 }
+        notes:        { type: string, maxLength: 1000 }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+        deleted_at:   { type: string, format: date-time, nullable: true }
+    PersonCreate:
+      type: object
+      required: [name]
+      properties:
+        name:  { type: string, minLength: 1, maxLength: 80 }
+        notes: { type: string, maxLength: 1000, default: '' }
+    PersonUpdate:
+      type: object
+      properties:
+        name:  { type: string, minLength: 1, maxLength: 80 }
+        notes: { type: string, maxLength: 1000 }
+
+    PurchasePlan:
+      type: object
+      required: [id, workspace_id, name, total_amount_cents, installments, remaining_installments, created_at]
+      properties:
+        id:                     { type: string, format: uuid }
+        workspace_id:           { type: string, format: uuid }
+        person_id:              { type: string, format: uuid, nullable: true }
+        name:                   { type: string, minLength: 1, maxLength: 80 }
+        total_amount_cents:     { type: integer, format: int64, minimum: 1 }
+        installments:           { type: integer, minimum: 2, maximum: 360 }
+        remaining_installments: { type: integer, minimum: 0 }
+        created_at:             { type: string, format: date-time }
+        deleted_at:             { type: string, format: date-time, nullable: true }
+    PurchasePlanCreate:
+      type: object
+      required: [name, category_id, total_amount_cents, installments, first_occurred_at]
+      description: |
+        `category_id` must reference an `expense` category in the
+        workspace. `total_amount_cents` is the principal of the whole
+        purchase; the server splits it evenly across `installments`
+        rows, with the last row absorbing the rounding remainder so the
+        sum equals the principal exactly. `payment_method` defaults to
+        `credit` since installment plans almost always ride a credit
+        card.
+      properties:
+        name:               { type: string, minLength: 1, maxLength: 80 }
+        category_id:        { type: string, format: uuid }
+        person_id:          { type: string, format: uuid, nullable: true }
+        account_id:         { type: string, format: uuid, nullable: true }
+        total_amount_cents: { type: integer, format: int64, minimum: 1 }
+        installments:      { type: integer, minimum: 2, maximum: 360 }
+        first_occurred_at: { type: string, format: date-time }
+        payment_method:    { $ref: '#/components/schemas/PaymentMethod' }
+        source:            { $ref: '#/components/schemas/TransactionSource' }
+        notes:             { type: string, maxLength: 1000 }
