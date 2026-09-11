@@ -1,0 +1,66 @@
+-- What the user explicitly attached to one turn, stored with the turn.
+--
+-- ── Why this column exists ─────────────────────────────────────────────
+-- The composer can now scope a turn: "answer this, and for this turn only,
+-- these are the capabilities you have". That is a decision a person made at
+-- a moment in time, and the transcript has to be able to report it
+-- afterwards. It cannot be recomputed, and the reason is the same one
+-- migration 0010 gave for the context report:
+--
+--   the grant may have been revoked since;
+--   the tool may have been renamed, or removed by a deploy;
+--   the registry the answer would be resolved against is a different set.
+--
+-- Deriving "what was selected" from `agent_tools` as it stands today would
+-- produce a confident statement about last week that is simply false. So
+-- the selection is stamped when the turn happens and never derived again.
+--
+-- ── Why identity AND label, and nothing else ───────────────────────────
+-- Identity, because that is what a reader compares and what survives a
+-- rename of the display text. Label, because a name that no longer resolves
+-- would otherwise render as a bare dotted string, and the honest answer to
+-- "what did I attach here?" is the words that were on the chip when it was
+-- attached.
+--
+-- What is NOT copied is the definition: no schema, no description, no
+-- effect. Those are properties of the program, they ship with the binary,
+-- and a stored copy would be a second description of an executor free to
+-- contradict the code — precisely what migration 0012 refused to create.
+--
+-- ── Why JSONB and not a table ──────────────────────────────────────────
+-- The same test 0010 applied, with the same outcome:
+--
+--   Query    — the selection is never filtered, aggregated or joined by
+--              its interior. It is read whole, for one message, by the
+--              transcript that is already reading that message.
+--   Lifecycle— it belongs to exactly one row and must die with it.
+--              Truncate and regenerate hard-delete the user turn, and a
+--              column goes with the row for free: there is no cascade to
+--              get right and no way to leave an orphan, because there is no
+--              second row to orphan.
+--   Evolution— a new reference kind is a change in the Go producer either
+--              way; with a table it would also be a migration and a join.
+--
+-- `tool_calls` went the other way in 0012, and the contrast is the reason:
+-- that table IS queried by conversation, read on its own schedule, and
+-- holds payloads measured in kilobytes. This holds at most sixteen short
+-- objects and is read with the row it hangs off.
+--
+-- ── Why the column is not called "references" ──────────────────────────
+-- REFERENCES is a reserved word in SQL. A column that has to be quoted
+-- everywhere it appears is a column somebody eventually forgets to quote.
+--
+-- ── No backfill, and none is possible ──────────────────────────────────
+-- No turn has ever carried a selection. NULL on every existing row is the
+-- true statement, and it means exactly what it will go on meaning: no
+-- explicit selection was made, so every authorized tool was exposed. An
+-- invented `[]` would have been a fabricated historical claim.
+--
+-- ── Why there is no CHECK on the shape ─────────────────────────────────
+-- The bound is by construction: domain.MaxTurnReferences caps the count and
+-- the label length is bounded in the domain type, so the worst case is a
+-- couple of kilobytes. A constraint here would report a producer that
+-- changed shape far too late and far too obscurely — the same argument
+-- migration 0010 made, and for the same shape of data.
+ALTER TABLE chat.messages
+    ADD COLUMN turn_references JSONB;

@@ -1,0 +1,48 @@
+-- The account of what a turn actually carried, stored with the turn.
+--
+-- ── Why this column exists ─────────────────────────────────────────────
+-- The Context Builder has produced a report from the start, and until now it
+-- lived exactly as long as the function call that made it. That was enough
+-- while nothing consumed it. It stops being enough the moment someone asks
+-- "what did the agent actually receive to answer this?", because the honest
+-- answer cannot be recomputed:
+--
+--   the memories may have been edited or deleted since;
+--   the sources may have been rewritten;
+--   the instructions may have changed;
+--   history_limit may have been lowered.
+--
+-- Rebuilding the report from today's configuration would produce a
+-- confident, well-formatted lie about a turn that happened last week. So
+-- the report is stamped when the turn happens, and never derived again.
+--
+-- ── Why one JSONB column and not two tables ────────────────────────────
+-- The alternative was `message_context_blocks` and
+-- `message_context_exclusions`, joined on every read. It was rejected on
+-- both of the grounds that normally justify normalising, because neither
+-- applies here:
+--
+--   Query    — the report is never filtered, aggregated or joined by its
+--              interior. It is read whole, for one message, by one panel.
+--              The scalars that ARE queried (estimated_prompt_tokens, cost,
+--              usage_source) already exist as typed columns and stay
+--              there.
+--   Evolution— a new block kind or exclusion reason is a change in the Go
+--              producer either way; with two tables it would also be a
+--              migration, a scan and a join.
+--
+-- What is left is a snapshot that belongs to exactly one row, is written
+-- once, and is read whole. That is what a document column is for.
+--
+-- ── Why the size is bounded by construction ────────────────────────────
+-- No CHECK on length: the shape cannot grow unboundedly. There are five
+-- block kinds and four exclusion reasons, both compile-time closed sets, so
+-- the worst case is a few hundred bytes of integers. A row storing anything
+-- larger would mean the producer changed shape, which a constraint here
+-- would report far too late and far too obscurely.
+--
+-- NULL means no report: every user turn, and every assistant turn written
+-- before this migration. Absent is not the same as empty, and readers must
+-- treat it as "not recorded" rather than "nothing was sent".
+ALTER TABLE chat.messages
+    ADD COLUMN context_report JSONB;
