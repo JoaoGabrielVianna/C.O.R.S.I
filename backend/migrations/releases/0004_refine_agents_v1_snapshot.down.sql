@@ -1,0 +1,5 @@
+-- No down. Restoring the coarser nine-capability snapshot would mean
+-- writing back a description the owner did not approve, and if 0005 has
+-- run the row is frozen and the write would fail anyway.
+--
+-- Left empty so the version steps back without touching the record.
