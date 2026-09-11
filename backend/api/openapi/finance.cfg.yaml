@@ -1,0 +1,6 @@
+package: financeapi
+output: internal/finance/adapters/httpapi/oapi_gen.go
+generate:
+  chi-server: true
+  models: true
+  strict-server: true
