@@ -1,0 +1,12 @@
+-- There is no down for this one, and that is the point.
+--
+-- Publishing is the moment a release becomes history, and the freeze
+-- trigger refuses to modify a published row — including from here. A down
+-- migration that could un-publish would mean the guarantee is not a
+-- guarantee, only a setting.
+--
+-- Reverting a published release is a restore from backup, which is already
+-- this project's answer for rollback on a populated database.
+--
+-- Left empty deliberately: golang-migrate steps the version back without
+-- touching the row, so the timeline can move while the fact stays.
