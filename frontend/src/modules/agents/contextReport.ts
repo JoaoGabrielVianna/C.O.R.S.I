@@ -40,6 +40,7 @@ const BLOCK_ORDER: ContextBlockKind[] = [
   "tools",
   "memory",
   "sources",
+  "execution_evidence",
   "tool_evidence",
   "history",
   "current_message",
@@ -60,6 +61,10 @@ const BLOCK_LABEL: Record<ContextBlockKind, string> = {
   // rather than for where it came from: "Ferramentas anteriores" would read
   // as a list of tools, and the block is the observations, not the tools.
   tool_evidence: "Evidência anterior",
+  // What earlier turns DID, as opposed to what they saw. "Execuções
+  // anteriores" and not "Evidência de execução": the block is the list of
+  // capabilities that ran, and the reader is scanning for a verb.
+  execution_evidence: "Execuções anteriores",
   history: "Conversa",
   current_message: "Mensagem atual",
   tool_results: "Resultado das ferramentas",

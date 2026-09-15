@@ -173,19 +173,67 @@ export async function streamMessage(
   signal?: AbortSignal,
   references?: readonly SendReference[],
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
+  return streamTurn(
+    `/chat/conversations/${conversationId}/messages`,
+    // The field is omitted entirely when nothing was attached. An explicit
+    // `[]` means the same thing to the server, but a body that carries only
+    // what it has to is the one a pre-Batch-4 backend would also accept.
+    references && references.length > 0 ? { content, references } : { content },
+    handlers,
+    signal,
+  );
+}
+
+/**
+ * Continue a turn that stopped with work already done.
+ *
+ * ── Why this is not `streamMessage("Try again")` ───────────────────────
+ * Because that is what caused the first User Beta incident. A turn created
+ * a Room and a list, hit the tool-round ceiling before adding the items,
+ * and the only route the product offered was typing into the composer.
+ * "Try again" is a new question, and "again" means start over: the next
+ * turn created a SECOND Room and a SECOND list.
+ *
+ * A resume adds no question. It names the interrupted turn, and the server
+ * answers the ORIGINAL one again — this time knowing which entities the
+ * first attempt already created. See chat/app/resume.go.
+ */
+export async function streamResume(
+  conversationId: string,
+  messageId: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamTurn(
+    `/chat/conversations/${conversationId}/resume`,
+    { message_id: messageId },
+    handlers,
+    signal,
+  );
+}
+
+/**
+ * The transport both turn-producing routes share.
+ *
+ * One function because the SSE handling below is subtle — partial frames,
+ * multi-byte boundaries, abort-versus-failure — and a second copy of it
+ * would be where a resume quietly stopped delivering `done`, which is the
+ * frame carrying the receipts.
+ */
+async function streamTurn(
+  path: string,
+  body: unknown,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Workspace-Id": getApiWorkspaceId(),
       Accept: "text/event-stream",
     },
-    // The field is omitted entirely when nothing was attached. An explicit
-    // `[]` means the same thing to the server, but a body that carries only
-    // what it has to is the one a pre-Batch-4 backend would also accept.
-    body: JSON.stringify(
-      references && references.length > 0 ? { content, references } : { content },
-    ),
+    body: JSON.stringify(body),
     signal,
   });
 

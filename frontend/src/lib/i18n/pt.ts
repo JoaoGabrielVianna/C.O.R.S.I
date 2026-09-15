@@ -580,6 +580,9 @@ export const pt = {
         },
         form: {
           temperature: "Temperatura ({value})",
+          temperatureAuto: "padrão do modelo",
+          temperatureAutoLabel: "Temperatura (padrão do modelo)",
+          temperatureAutoHint: "Usar o padrão do modelo",
           advancedSummary: "temp {temp} · histórico {history} · máx {max}",
           provider: "Provedor",
           providerHint: "A conexão (endpoint + credencial) por onde as mensagens deste agente saem e são cobradas. Dá para trocar depois.",
@@ -651,6 +654,8 @@ export const pt = {
           alreadyAttached: "Já anexada",
           referenceGone: "não está mais disponível",
           copyCode: "Copiar código",
+          interrupted: "Este turno parou no meio, depois de já ter feito parte do trabalho.",
+          continueTurn: "Continuar",
         },
         toolActivity: {
           loadFailed: "Não deu para ler o registro desta chamada.",

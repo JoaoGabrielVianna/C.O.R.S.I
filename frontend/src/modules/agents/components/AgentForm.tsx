@@ -46,13 +46,29 @@ export interface AgentFormValues {
   description: string;
   systemPrompt: string;
   model: string;
-  temperature: number;
+  /** Null is "no preference": nothing is sent and the provider decides. */
+  temperature: number | null;
   historyLimit: number;
   maxTokens: number;
 }
 
-/** Mirrors the domain defaults in `domain/agent.go`. */
-const DEFAULTS = { temperature: 0.7, historyLimit: 40, maxTokens: 4096 } as const;
+/**
+ * Mirrors the domain defaults in `domain/agent.go`.
+ *
+ * Temperature is deliberately absent. The backend has no default for it and
+ * must not: the valid value is per-model and value-exact, so any number this
+ * form pre-filled would be a guess that produces a 502 on some models. See
+ * ApiAgent.temperature.
+ */
+const DEFAULTS = { historyLimit: 40, maxTokens: 4096 } as const;
+
+/**
+ * The value the slider shows once someone turns the preference ON.
+ *
+ * It is a STARTING POINT for an explicit choice, never a default: it is only
+ * ever read when the operator has just said they want to set one.
+ */
+const TEMPERATURE_SEED = 1;
 
 /** The backend caps the system prompt here (`domain/agent.go`). */
 const SYSTEM_PROMPT_MAX = 20_000;
@@ -67,7 +83,11 @@ function initialAgentValues(
     description: agent?.description ?? "",
     systemPrompt: agent?.system_prompt ?? "",
     model: agent?.model ?? "",
-    temperature: agent?.temperature ?? DEFAULTS.temperature,
+    // `?? DEFAULTS.temperature` here was a real bug waiting: it would read
+    // an agent that expressed no preference as 0.7 and then SAVE 0.7 on the
+    // next edit, silently re-creating the incompatibility on every visit to
+    // this screen. Null in, null out.
+    temperature: agent?.temperature ?? null,
     historyLimit: agent?.history_limit ?? DEFAULTS.historyLimit,
     maxTokens: agent?.max_tokens ?? DEFAULTS.maxTokens,
   };
@@ -234,7 +254,12 @@ export function AgentForm({
             {t.app.modules.agents.form.advanced}
             <span className="ml-auto font-mono text-[10.5px] tabular-nums text-(--color-muted-foreground)">
               {t.app.modules.agents.form.advancedSummary
-                .replace("{temp}", String(values.temperature))
+                .replace(
+                  "{temp}",
+                  values.temperature === null
+                    ? t.app.modules.agents.form.temperatureAuto
+                    : String(values.temperature),
+                )
                 .replace("{history}", String(values.historyLimit))
                 .replace("{max}", String(values.maxTokens))}
             </span>
@@ -247,17 +272,40 @@ export function AgentForm({
                   htmlFor="a-temp"
                   hint={t.app.modules.agents.form.temperatureHint}
                 >
-                  {t.app.modules.agents.form.temperature.replace("{value}", String(values.temperature))}
+                  {values.temperature === null
+                    ? t.app.modules.agents.form.temperatureAutoLabel
+                    : t.app.modules.agents.form.temperature.replace(
+                        "{value}",
+                        String(values.temperature),
+                      )}
                 </FieldLabel>
+                {/*
+                  The checkbox is the whole point of this control, not a
+                  refinement of it: without a way to say "no preference" the
+                  form can only ever send a number, and a number is what
+                  claude-opus-* answers 400 to unless it happens to be 1.
+                */}
+                <label className="flex items-center gap-2 text-[11.5px] text-(--color-muted-foreground)">
+                  <input
+                    type="checkbox"
+                    checked={values.temperature === null}
+                    onChange={(e) =>
+                      set("temperature", e.target.checked ? null : TEMPERATURE_SEED)
+                    }
+                    className="accent-(--color-accent)"
+                  />
+                  {t.app.modules.agents.form.temperatureAutoHint}
+                </label>
                 <input
                   id="a-temp"
                   type="range"
                   min={0}
                   max={2}
                   step={0.1}
-                  value={values.temperature}
+                  value={values.temperature ?? TEMPERATURE_SEED}
+                  disabled={values.temperature === null}
                   onChange={(e) => set("temperature", Number(e.target.value))}
-                  className="h-10 w-full accent-(--color-accent)"
+                  className="h-10 w-full accent-(--color-accent) disabled:opacity-40"
                 />
               </div>
 

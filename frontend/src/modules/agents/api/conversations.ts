@@ -70,7 +70,12 @@ export type ContextBlockKind =
   // replayed so a follow-up question is answered from the observation rather
   // than from the assistant's prose about it. Distinct from `tool_results`:
   // nothing ran this turn to produce it.
-  | "tool_evidence";
+  | "tool_evidence"
+  // What earlier turns of the same conversation DID: the write capabilities
+  // that ran and how each ended. Distinct from `tool_evidence`, which is the
+  // payload those turns observed — this block carries no payload at all, and
+  // a capability whose payload is withheld still appears in it.
+  | "execution_evidence";
 
 /**
  * Why something a turn could have carried did not reach the model.

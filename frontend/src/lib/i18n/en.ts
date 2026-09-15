@@ -572,6 +572,9 @@ export const en: Translations = {
         },
         form: {
           temperature: "Temperature ({value})",
+          temperatureAuto: "model default",
+          temperatureAutoLabel: "Temperature (model default)",
+          temperatureAutoHint: "Use the model's default",
           advancedSummary: "temp {temp} · history {history} · max {max}",
           provider: "Provider",
           providerHint: "The connection (endpoint + credential) this agent's messages leave through and are billed to. It can be changed later.",
@@ -643,6 +646,8 @@ export const en: Translations = {
           alreadyAttached: "Already attached",
           referenceGone: "is no longer available",
           copyCode: "Copy code",
+          interrupted: "This turn stopped part way, after it had already done some of the work.",
+          continueTurn: "Continue",
         },
         toolActivity: {
           loadFailed: "Could not read this call's record.",

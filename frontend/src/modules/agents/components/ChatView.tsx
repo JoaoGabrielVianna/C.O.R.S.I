@@ -123,6 +123,7 @@ export function ChatView({
     isStreaming,
     send,
     resend,
+    resume,
     stop,
     clearError,
   } = useChatStream(conversation.id);
@@ -193,6 +194,26 @@ export function ChatView({
   }, [isStreaming, onBusyChange]);
 
   const messages = useMemo(() => messagesQuery.data?.items ?? [], [messagesQuery.data]);
+
+  /**
+   * The last turn, when it stopped with work already done.
+   *
+   * ── Why this exists ────────────────────────────────────────────────
+   * The first User Beta incident. A turn created a Room and a list, hit the
+   * tool-round ceiling before adding the items, and the error banner
+   * offered only "close" — so the only way forward was typing into the
+   * composer. The user typed "Try again", which is a NEW QUESTION meaning
+   * start over, and the next turn created a second Room and a second list.
+   *
+   * Offering the continuation explicitly is what removes that choice.
+   */
+  const resumable = useMemo(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return null;
+    // Only the ceiling, matching the server. Anything else it refuses, and
+    // an affordance that offers a refusal is worse than none.
+    return last.finish_reason === "tool_round_limit" ? last : null;
+  }, [messages]);
 
   /**
    * What the system knows each turn changed, keyed by message id.
@@ -584,6 +605,27 @@ export function ChatView({
       {/* Same measure as the transcript. A composer that runs the full
           width of a 34" monitor is a worse text field, not a better one. */}
       <div className={cn("mx-auto w-full shrink-0", measure)}>
+        {resumable && !isStreaming ? (
+          /* Not an error banner: the turn did real work and stopped part
+             way. It reads as unfinished business with a way to finish it,
+             which is what "Try again" could never be. */
+          <div className="mb-2 flex items-start gap-2 rounded-xl border border-(--color-border) bg-(--color-muted)/40 px-3 py-2.5">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-(--color-muted-foreground)" />
+            <p className="flex-1 text-[11.5px] leading-relaxed text-(--color-muted-foreground)">
+              {t.app.modules.agents.chat.interrupted}
+            </p>
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={() =>
+                void resume(resumable.id, t.app.modules.agents.chat.continueTurn)
+              }
+            >
+              {t.app.modules.agents.chat.continueTurn}
+            </Button>
+          </div>
+        ) : null}
+
         {error ? (
           isBudgetRefusal(error) && agent ? (
             /* Not a failure: a limit the user set, doing its job. It reads

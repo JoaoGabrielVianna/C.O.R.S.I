@@ -24,7 +24,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api/client";
 import { getApiWorkspaceId } from "@/lib/api/workspace";
 import { truncateFrom } from "@/modules/agents/api/conversations";
-import { streamMessage, type SendReference } from "@/modules/agents/api/stream";
+import {
+  streamMessage,
+  streamResume,
+  type SendReference,
+  type ToolFrame,
+} from "@/modules/agents/api/stream";
 import { conversationsRootKey, messagesKey } from "./useConversations";
 
 /**
@@ -90,6 +95,8 @@ export interface ChatStream {
    * time. Regenerating is a fresh turn, scoped the way a fresh turn is.
    */
   resend: (fromSeq: number, content: string) => Promise<void>;
+  /** Continue an interrupted turn. See the callback for why it is not a send. */
+  resume: (messageId: string, label: string) => Promise<void>;
   /** Ends the turn early. The server keeps whatever text it already sent. */
   stop: () => void;
   clearError: () => void;
@@ -154,7 +161,16 @@ export function useChatStream(conversationId: string | null): ChatStream {
   }, []);
 
   const runTurn = useCallback(
-    async (content: string, references?: readonly SendReference[]) => {
+    async (
+      content: string,
+      references?: readonly SendReference[],
+      /**
+       * When set, this is a CONTINUATION of the named turn rather than a
+       * new question. `content` is then only what the composer shows while
+       * the stream runs — nothing is sent, and no user message is written.
+       */
+      resumeMessageId?: string,
+    ) => {
       if (!conversationId) return;
 
       const controller = new AbortController();
@@ -173,23 +189,20 @@ export function useChatStream(conversationId: string | null): ChatStream {
       let streamError: ApiError | null = null;
 
       try {
-        await streamMessage(
-          conversationId,
-          content,
-          {
-            onReasoning: (text) => {
+        const handlers = {
+          onReasoning: (text: string) => {
               reasoningBuf.current += text;
               setPhase((p) => (p === "sending" ? "reasoning" : p));
               scheduleFlush();
             },
-            onDelta: (text) => {
+          onDelta: (text: string) => {
               answerBuf.current += text;
               // React bails out when the value is unchanged, so this is a
               // no-op on every token after the first.
               setPhase("writing");
               scheduleFlush();
             },
-            onTool: (frame) => {
+          onTool: (frame: ToolFrame) => {
               // Correlated by call_id, not appended blindly: a round can run
               // several tools at once, so the `ok` frame of one must update
               // its own row rather than land after the `running` of another.
@@ -208,16 +221,19 @@ export function useChatStream(conversationId: string | null): ChatStream {
                 return copy;
               });
             },
-            onDone: () => {
+          onDone: () => {
               /* the refetch below is what renders the final message */
             },
-            onError: (err) => {
-              streamError = err;
-            },
+          onError: (err: ApiError) => {
+            streamError = err;
           },
-          controller.signal,
-          references,
-        );
+        };
+        // Same transport, same frames, same receipts — a continuation IS
+        // the turn arriving, just later. The only difference is that it
+        // sends no question.
+        await (resumeMessageId
+          ? streamResume(conversationId, resumeMessageId, handlers, controller.signal)
+          : streamMessage(conversationId, content, handlers, controller.signal, references));
       } catch (err) {
         // Thrown only for failures that happened before the stream opened,
         // which still carry a status code.
@@ -283,6 +299,21 @@ export function useChatStream(conversationId: string | null): ChatStream {
     [conversationId, phase, qc, runTurn],
   );
 
+  /**
+   * Continue an interrupted turn instead of asking again.
+   *
+   * Takes the id of the turn that stopped. Nothing is typed and nothing is
+   * sent: the server re-answers the question already in the transcript,
+   * knowing which entities the first attempt created. See streamResume.
+   */
+  const resume = useCallback(
+    async (messageId: string, label: string) => {
+      if (phase === "sending" || phase === "reasoning" || phase === "writing") return;
+      await runTurn(label, undefined, messageId);
+    },
+    [phase, runTurn],
+  );
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
@@ -303,6 +334,7 @@ export function useChatStream(conversationId: string | null): ChatStream {
     isStreaming: phase === "sending" || phase === "reasoning" || phase === "writing",
     send,
     resend,
+    resume,
     stop,
     clearError,
   };

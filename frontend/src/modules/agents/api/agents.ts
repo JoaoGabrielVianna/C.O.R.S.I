@@ -86,7 +86,17 @@ export interface ApiAgent {
   description: string;
   system_prompt: string;
   model: string;
-  temperature: number;
+  /**
+   * The operator's explicit sampling preference, or null when they expressed
+   * none and the provider applies its own default.
+   *
+   * Null is the common case and is NOT a missing value to be filled in. The
+   * backend stopped choosing one because the choice is per-model and
+   * value-exact: claude-opus-4-7 refuses 0.0, 0.5 and 0.7 and accepts only
+   * 1, while claude-haiku-4-5 accepts all four. Coercing null to a number
+   * anywhere in this client re-creates the 502 it was removed to prevent.
+   */
+  temperature: number | null;
   max_tokens: number;
   history_limit: number;
   accent: string;
@@ -104,7 +114,14 @@ export interface CreateAgentRequest {
   system_prompt?: string;
   /** Blank inherits the provider's default_model. */
   model?: string;
-  temperature?: number;
+  /**
+   * Three states, unlike every other field here:
+   *
+   *   absent   leave it alone
+   *   null     clear it back to no preference
+   *   number   set it
+   */
+  temperature?: number | null;
   max_tokens?: number;
   history_limit?: number;
   accent?: string;
