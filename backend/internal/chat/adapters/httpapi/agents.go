@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -95,10 +96,25 @@ type updateAgentRequest struct {
 	Description  *string    `json:"description"`
 	SystemPrompt *string    `json:"system_prompt"`
 	Model        *string    `json:"model"`
-	Temperature  *float32   `json:"temperature"`
-	MaxTokens    *int       `json:"max_tokens"`
-	HistoryLimit *int       `json:"history_limit"`
-	Accent       *string    `json:"accent"`
+	// Temperature is THREE-state, and the only field here that is.
+	//
+	//	absent   leave it alone
+	//	null     clear it: the agent goes back to having no preference
+	//	number   set it
+	//
+	// Its siblings are two-state, where both absent and null mean "leave it
+	// alone", because none of them has a meaningful unset value. This one
+	// does — see domain.Agent.Temperature — and without the third state an
+	// agent given a temperature could never be returned to the provider's
+	// own default, which is the state that works on every model.
+	//
+	// Raw rather than *float32 because Go's decoder collapses absent and
+	// null into the same nil, and those are the two cases that have to be
+	// told apart.
+	Temperature  json.RawMessage `json:"temperature"`
+	MaxTokens    *int            `json:"max_tokens"`
+	HistoryLimit *int            `json:"history_limit"`
+	Accent       *string         `json:"accent"`
 	// Budget is absent when the request does not mention it, and present
 	// with null members when a limit is being removed. The two are different
 	// requests, which is why it is a pointer to a struct of pointers.
@@ -125,20 +141,26 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if !h.decode(w, r, &req) {
 		return
 	}
+	temperature, temperatureSet, ok := readTemperature(req.Temperature)
+	if !ok {
+		h.writeDomainErr(w, domain.Invalid("temperature must be a number or null"))
+		return
+	}
 	a, err := h.svc.UpdateAgent(r.Context(), app.UpdateAgentInput{
-		WorkspaceID:  ws,
-		ID:           id,
-		ProviderID:   req.ProviderID,
-		Name:         req.Name,
-		Description:  req.Description,
-		SystemPrompt: req.SystemPrompt,
-		Model:        req.Model,
-		Temperature:  req.Temperature,
-		MaxTokens:    req.MaxTokens,
-		HistoryLimit: req.HistoryLimit,
-		Accent:       req.Accent,
-		Budget:       budgetInput(req.Budget),
-		MemoryPolicy: memoryPolicyInput(req.MemoryPolicy),
+		WorkspaceID:    ws,
+		ID:             id,
+		ProviderID:     req.ProviderID,
+		Name:           req.Name,
+		Description:    req.Description,
+		SystemPrompt:   req.SystemPrompt,
+		Model:          req.Model,
+		Temperature:    temperature,
+		TemperatureSet: temperatureSet,
+		MaxTokens:      req.MaxTokens,
+		HistoryLimit:   req.HistoryLimit,
+		Accent:         req.Accent,
+		Budget:         budgetInput(req.Budget),
+		MemoryPolicy:   memoryPolicyInput(req.MemoryPolicy),
 	})
 	if err != nil {
 		h.writeDomainErr(w, err)
@@ -222,4 +244,23 @@ func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readTemperature decodes the three states of the field.
+//
+// Returns (value, mentioned, wellFormed). `mentioned` false leaves the
+// agent's temperature exactly as it was; `mentioned` true with a nil value
+// clears it.
+func readTemperature(raw json.RawMessage) (*float32, bool, bool) {
+	if len(raw) == 0 {
+		return nil, false, true
+	}
+	if string(raw) == "null" {
+		return nil, true, true
+	}
+	var v float32
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false, false
+	}
+	return &v, true, true
 }

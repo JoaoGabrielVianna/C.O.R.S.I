@@ -58,9 +58,18 @@ func New(log *slog.Logger) *Client {
 // --- wire types -----------------------------------------------------------
 
 type completionRequest struct {
-	Model         string         `json:"model"`
-	Messages      []wireMessage  `json:"messages"`
-	Temperature   float32        `json:"temperature"`
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
+	// Omitted entirely when the agent expressed no preference, which is what
+	// lets the provider apply its own default. A pointer rather than a value
+	// because `omitempty` on a float32 would also drop a deliberate 0, and
+	// 0 is a temperature somebody may genuinely want.
+	//
+	// Measured, and the reason this is a pointer at all: claude-opus-4-7
+	// answers 400 `litellm.UnsupportedParamsError` to 0.0, 0.5 and 0.7, and
+	// accepts only 1. Sending nothing is the only request that is valid for
+	// every model.
+	Temperature   *float32       `json:"temperature,omitempty"`
 	MaxTokens     int            `json:"max_tokens"`
 	Stream        bool           `json:"stream"`
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`

@@ -314,12 +314,12 @@ func TestConsolidationUsesTheAgentsOwnTemperature(t *testing.T) {
 	e.proposes(`[]`, 100, 5)
 	e.consolidate(e.wsA, s.conversationID, 0)
 
-	if got := e.llm.lastRequest.Temperature; got != turnTemperature {
+	if got := e.llm.lastRequest.Temperature; !sameTemperature(got, turnTemperature) {
 		t.Fatalf("consolidation asked for temperature %v, but an ordinary turn asks for %v; "+
 			"a value the model may refuse breaks /lembrar on agents that chat perfectly",
 			got, turnTemperature)
 	}
-	if turnTemperature != 1 {
+	if turnTemperature == nil || *turnTemperature != 1 {
 		t.Fatalf("fixture drifted: the agent should be configured at 1, got %v", turnTemperature)
 	}
 }
@@ -335,9 +335,18 @@ func TestConsolidationDoesNotImposeATemperatureOnAnyAgent(t *testing.T) {
 	e.proposes(`[]`, 100, 5)
 	e.consolidate(e.wsA, s.conversationID, 0)
 
-	if got := e.llm.lastRequest.Temperature; got != 0.7 {
+	if got := e.llm.lastRequest.Temperature; got == nil || *got != 0.7 {
 		t.Fatalf("temperature = %v, want the agent's own 0.7", got)
 	}
+}
+
+// sameTemperature compares two preferences, including the case where both
+// are absent — which is now a legitimate and common state.
+func sameTemperature(a, b *float32) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // The ceiling has to cover THINKING plus the answer, not just the answer.

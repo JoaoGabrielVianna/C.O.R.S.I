@@ -1,0 +1,47 @@
+-- Temperature becomes OPTIONAL, because the platform cannot know what a
+-- model will accept.
+--
+-- ── The defect this closes ────────────────────────────────────────────
+-- The column defaulted to 0.7, so every agent created without an explicit
+-- choice carried one. Measured against the real gateway:
+--
+--   claude-opus-4-7             0.0  400 litellm.UnsupportedParamsError
+--                               0.5  400 litellm.UnsupportedParamsError
+--                               0.7  400 litellm.UnsupportedParamsError
+--                               1.0  ok
+--   claude-haiku-4-5-20251001   0.0  ok
+--                               0.5  ok
+--                               0.7  ok
+--                               1.0  ok
+--
+-- "claude-opus-4-7 does not support temperature=0.7. Only temperature=1 is
+-- supported." So an agent created with the platform default on that family
+-- was guaranteed to fail on its FIRST turn, with a 502, before it had said
+-- anything.
+--
+-- ── Why NULL and not a different number ───────────────────────────────
+-- Because the constraint is per-model and VALUE-EXACT, not a range. Any
+-- number the platform picks is a guess that is wrong for some model, and
+-- the table above shows the two families disagreeing about the same value.
+-- 0.7 is wrong for opus; 1 would be a quality change imposed on every other
+-- model to satisfy one family, and wrong the day a model appears that
+-- accepts only 0.
+--
+-- NULL is not a value. It says the operator expressed no preference, so
+-- nothing is sent and the provider applies its own default — which is
+-- valid by construction, for every model, including the ones that do not
+-- exist yet.
+--
+-- ── What this does NOT do ─────────────────────────────────────────────
+-- It does not touch existing rows. An agent already carrying 0.7 keeps it,
+-- because that is what its configuration says and a migration that
+-- rewrote live configuration would be deciding something for the operator
+-- silently. The rows that are wrong stay wrong and visibly so, and are
+-- fixed by editing the agent.
+--
+-- The CHECK is kept and still bounds an explicit value to 0..2. That is a
+-- sanity bound and NOT a compatibility claim: the table above is what
+-- compatibility looks like, and it is not ours to assert.
+
+ALTER TABLE chat.agents ALTER COLUMN temperature DROP NOT NULL;
+ALTER TABLE chat.agents ALTER COLUMN temperature DROP DEFAULT;

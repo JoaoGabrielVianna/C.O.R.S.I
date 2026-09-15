@@ -579,10 +579,14 @@ type Credentials struct {
 }
 
 type CompletionRequest struct {
-	Creds       Credentials
-	Model       string
-	Messages    []ChatMessage
-	Temperature float32
+	Creds    Credentials
+	Model    string
+	Messages []ChatMessage
+	// Temperature is the operator's explicit preference, or nil when they
+	// expressed none — in which case the adapter must not put the field on
+	// the wire at all. A zero here is a real request for 0, not an absence.
+	// See domain.Agent.Temperature.
+	Temperature *float32
 	MaxTokens   int
 	// User is forwarded as the OpenAI `user` field so the gateway can
 	// attribute spend to the agent that made the call. Metadata rides along

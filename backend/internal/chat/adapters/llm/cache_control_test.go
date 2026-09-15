@@ -210,7 +210,7 @@ func TestCacheBreakpointOnEmptyContentStaysAString(t *testing.T) {
 func TestWholeRequestBodyUnchangedWithoutBreakpoints(t *testing.T) {
 	body := marshalRequest(t, ports.CompletionRequest{
 		Model:       "claude-opus-4-7",
-		Temperature: 1,
+		Temperature: floatPtr(1),
 		MaxTokens:   4096,
 		Messages: []ports.ChatMessage{
 			{Role: "system", Content: "você é o Ledger"},
@@ -228,3 +228,7 @@ func TestWholeRequestBodyUnchangedWithoutBreakpoints(t *testing.T) {
 		t.Fatal("a top-level cache_control appeared; the breakpoint is per message")
 	}
 }
+
+// floatPtr is the explicit-preference form of a temperature. Nil means the
+// agent expressed none and the field never reaches the wire.
+func floatPtr(v float32) *float32 { return &v }

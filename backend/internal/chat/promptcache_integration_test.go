@@ -198,7 +198,7 @@ func TestKillSwitchRestoresThePreCachingRequestBody(t *testing.T) {
 	if len(on.Tools) != len(off.Tools) {
 		t.Fatalf("the tool declaration differs: %d on, %d off", len(on.Tools), len(off.Tools))
 	}
-	if on.Model != off.Model || on.MaxTokens != off.MaxTokens || on.Temperature != off.Temperature {
+	if on.Model != off.Model || on.MaxTokens != off.MaxTokens || !sameTemperature(on.Temperature, off.Temperature) {
 		t.Fatalf("a request parameter differs beyond the marker")
 	}
 }

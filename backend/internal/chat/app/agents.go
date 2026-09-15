@@ -55,7 +55,9 @@ func (s *Service) CreateAgent(ctx context.Context, in CreateAgentInput) (*domain
 		Description:  strings.TrimSpace(in.Description),
 		SystemPrompt: in.SystemPrompt,
 		Model:        model,
-		Temperature:  derefOr(in.Temperature, domain.DefaultTemperature),
+		// Passed straight through. Nil stays nil: the platform has no
+		// opinion to apply, which is the point. See domain.Agent.Temperature.
+		Temperature:  in.Temperature,
 		MaxTokens:    derefOr(in.MaxTokens, domain.DefaultMaxTokens),
 		HistoryLimit: derefOr(in.HistoryLimit, domain.DefaultHistoryLimit),
 		Accent:       accent,
@@ -79,10 +81,19 @@ type UpdateAgentInput struct {
 	Description  *string
 	SystemPrompt *string
 	Model        *string
-	Temperature  *float32
-	MaxTokens    *int
-	HistoryLimit *int
-	Accent       *string
+	// Temperature is read together with TemperatureSet, and the pair is the
+	// only three-state field on this input: not mentioned, set to a value,
+	// or explicitly cleared back to "no preference".
+	//
+	// Every sibling here is two-state, where nil means "not mentioned". That
+	// asymmetry is real and is the cost of the field having an unset state
+	// the others do not: without it, an agent could be given a temperature
+	// and never returned to the provider's own default.
+	Temperature    *float32
+	TemperatureSet bool
+	MaxTokens      *int
+	HistoryLimit   *int
+	Accent         *string
 	// Budget nil leaves the limits untouched; non-nil replaces both, so a
 	// member set to nil inside it removes that limit. "Not mentioned" and
 	// "set to no limit" are different requests and stay different here.
@@ -121,8 +132,11 @@ func (s *Service) UpdateAgent(ctx context.Context, in UpdateAgentInput) (*domain
 	if in.Model != nil {
 		current.Model = strings.TrimSpace(*in.Model)
 	}
-	if in.Temperature != nil {
-		current.Temperature = *in.Temperature
+	// The one field where `null` on the wire means CLEAR rather than "leave
+	// it alone", because it is the one field with a meaningful unset state.
+	// The handler tells the two apart; see updateAgentRequest.
+	if in.TemperatureSet {
+		current.Temperature = in.Temperature
 	}
 	if in.MaxTokens != nil {
 		current.MaxTokens = *in.MaxTokens

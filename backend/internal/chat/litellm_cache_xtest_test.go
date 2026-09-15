@@ -362,7 +362,7 @@ func TestX3StreamingSurvivesTheBlockForm(t *testing.T) {
 	client := llm.New(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 
 	stream, err := client.Stream(t.Context(), ports.CompletionRequest{
-		Creds: creds, Model: model, MaxTokens: 32, Temperature: 1,
+		Creds: creds, Model: model, MaxTokens: 32, Temperature: explicitTemperature(1),
 		Messages: []ports.ChatMessage{
 			{Role: "system", Content: stablePrefix(), CacheBreakpoint: true},
 			{Role: "user", Content: "responda apenas: ok"},
@@ -739,3 +739,7 @@ func TestX3CaptureCachedUsageFrame(t *testing.T) {
 	}
 	t.Logf("CACHED USAGE FRAME (paste into litellm_real_test.go):\n%s", frame)
 }
+
+// explicitTemperature is an operator's stated preference. Nil means none was
+// stated and the field never reaches the wire.
+func explicitTemperature(v float32) *float32 { return &v }

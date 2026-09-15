@@ -2366,11 +2366,16 @@ func TestAgentDefaultsAndUpdate(t *testing.T) {
 	rec := e.do("GET", "/chat/agents/"+s.agentID, e.wsA, nil)
 	wantStatus(t, rec, http.StatusOK)
 	agent := decode[map[string]any](t, rec)
-	// Compared with a tolerance: temperature is REAL in Postgres and
-	// float32 in the domain, so the JSON round trip cannot be expected to
-	// land on the exact float64 the constant widens to.
-	if got := agent["temperature"].(float64); !within(got, float64(domain.DefaultTemperature), 1e-6) {
-		t.Fatalf("temperature = %v, want the domain default %v", got, domain.DefaultTemperature)
+	// ── There is NO default temperature, and that is the assertion ─────
+	//
+	// It used to be 0.7, which guaranteed a 502 on the first turn of any
+	// agent created on claude-opus-*: measured, that family refuses 0.0,
+	// 0.5 and 0.7 and accepts only 1. A platform default is a claim about
+	// models this package has never heard of, so there is none, and a
+	// create that says nothing leaves the field null.
+	if got, present := agent["temperature"]; present && got != nil {
+		t.Fatalf("temperature = %v, want none: a default here is a guess "+
+			"that is wrong for some model", got)
 	}
 	if int(agent["max_tokens"].(float64)) != domain.DefaultMaxTokens {
 		t.Fatalf("max_tokens = %v", agent["max_tokens"])
