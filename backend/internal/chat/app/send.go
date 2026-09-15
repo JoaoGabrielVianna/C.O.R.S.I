@@ -105,20 +105,54 @@ const persistTimeout = 10 * time.Second
 // iteration is a paid provider call with a larger prompt than the last.
 // Without a ceiling the failure mode is not a wrong answer, it is a bill.
 //
-// ── Why three ──────────────────────────────────────────────────────────
-// Three rounds allow a chain of three dependent lookups — find the thing,
-// read the thing, check something about it — which covers every shape the
-// first real tools are expected to need. It bounds one turn at four
-// provider calls, so the worst case is knowable before it happens: four
+// ── What the number actually buys, measured ────────────────────────────
+// `round` counts PROVIDER CALLS, from 1, and the ceiling is checked after
+// the model asks for tools and before they run. So four permits:
+//
+//	provider call 1  asks for tools   1 >= 4 is false  → tools RUN
+//	provider call 2  asks for tools   2 >= 4 is false  → tools RUN
+//	provider call 3  asks for tools   3 >= 4 is false  → tools RUN
+//	provider call 4  asks for tools   4 >= 4 is TRUE   → the turn stops
+//
+// Four provider calls, and at most THREE rounds of tool execution.
+//
+// ── Why it was three, and why three was not enough ─────────────────────
+// Three permitted two execution rounds, which is ONE indirection: find the
+// thing, then act on it. A live battery showed that the most ordinary
+// operation a knowledge base has does not fit in one indirection. "Mark
+// the rice as bought" is
+//
+//	list the artifacts → read the one that matches → update the item
+//
+// three DEPENDENT steps, because the item's id does not exist until the
+// second call has returned. The third was refused every time, and the same
+// shape refused `relation.create` outright: both endpoints must exist
+// before the relation can name them, so creating them consumed the budget
+// that the relation itself needed. Zero relations were created in the
+// entire battery.
+//
+// The correction matters and is worth stating exactly: the limit was never
+// about VOLUME. The same battery watched a single round carry five
+// independent `item.add` calls, because a model emits independent calls in
+// parallel. What it bounds is DEPTH — how many times the model may look at
+// a result before deciding the next call. Three rounds buys two
+// indirections: discover, read, act.
+//
+// ── Why four and not more ──────────────────────────────────────────────
+// Because four is what the observed failures need and nothing beyond them
+// asked for more. The worst case stays knowable before it happens: four
 // times `max_tokens` of output, plus a prompt that grows by the tool
-// results.
+// results. Raising it further would be buying depth nobody has shown a use
+// for, and every round is a paid provider call with a larger prompt than
+// the last.
 //
 // It is a constant, not a setting. A per-agent knob would be a number the
 // user has no basis to choose and every reason to raise, which is the
 // wrong direction for a limit whose purpose is to be reached rarely and
 // noticed when it is. If evidence appears that real work needs more, the
-// evidence is the reason to change the constant.
-const maxToolRounds = 3
+// evidence is the reason to change the constant — which is exactly what
+// happened here.
+const maxToolRounds = 4
 
 // SendMessage records the user's turn, streams the model's reply into sink,
 // and records that too.
@@ -284,24 +318,54 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 		}
 	}
 
-	history, err := s.repos.Messages.ListRecent(ctx, in.WorkspaceID, conv.ID, agent.HistoryLimit)
+	return s.answerTurn(ctx, answerInput{
+		Conv:     conv,
+		Agent:    agent,
+		Creds:    creds,
+		Gate:     gate,
+		Current:  userMsg,
+		Attached: attached,
+		ToolDefs: toolDefs,
+		Scoped:   len(in.References) > 0,
+		Withheld: withheld,
+	}, sink)
+}
+
+// answerTurn is everything a turn does once the question it answers is
+// settled: read the window, compose the context, drive the loop, persist.
+//
+// ── Why it is shared ───────────────────────────────────────────────────
+// Two entry points reach it. SendMessage settles the question by WRITING
+// one; ResumeTurn settles it by pointing at a question that was already
+// written and answered badly. Everything after that is identical, and a
+// second copy of it would be the place where resume quietly stopped
+// carrying memory, or evidence, or the budget gate.
+func (s *Service) answerTurn(ctx context.Context, in answerInput, sink TurnSink) (*domain.Message, error) {
+	conv, agent, creds := in.Conv, in.Agent, in.Creds
+	toolDefs, withheld := in.ToolDefs, in.Withheld
+
+	history, err := s.repos.Messages.ListRecent(ctx, conv.WorkspaceID, conv.ID, agent.HistoryLimit)
 	if err != nil {
 		return nil, err
 	}
+	history = withoutInterruptedTurn(history, in.Resume)
 
 	// Read after the question is persisted and before the context is built.
 	// A failure in either degrades the turn instead of ending it: see
 	// memoriesForTurn and sourcesForTurn.
-	memories, memoryUnavailable := s.memoriesForTurn(ctx, in.WorkspaceID, agent.ID)
-	sources, sourcesUnavailable := s.sourcesForTurn(ctx, in.WorkspaceID, agent.ID)
+	memories, memoryUnavailable := s.memoriesForTurn(ctx, conv.WorkspaceID, agent.ID)
+	sources, sourcesUnavailable := s.sourcesForTurn(ctx, conv.WorkspaceID, agent.ID)
 
 	// What this conversation's earlier tools observed, bounded by the same
 	// window that was just read. Passed the history so the two cannot
 	// disagree about which turns are in scope — see evidenceForTurn.
 	// The turn's subjects are passed so a stale reading of one of them is
 	// not replayed as though it were still true. See dropReadingsOfSubjects.
-	subjects := turnContextReferences(conv, attached)
-	evidence, evidenceUnavailable := s.evidenceForTurn(ctx, in.WorkspaceID, conv.ID, history, subjects)
+	//
+	// The same read also yields what those turns DID, which is a different
+	// question with a different answer and no second query: see turnEvidence.
+	subjects := turnContextReferences(conv, in.Attached)
+	evidence := s.evidenceForTurn(ctx, conv.WorkspaceID, conv.ID, history, subjects)
 
 	// Tools do NOT degrade, unlike the two reads above. See authorizedTools:
 	// carrying on without them would turn a turn that needed a capability
@@ -312,8 +376,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 	// resolved from this same read before anything was written. Reading
 	// again would be asking the same question twice and would let a revoke
 	// land between the two answers.
-	if len(in.References) == 0 {
-		toolDefs, err = s.authorizedTools(ctx, in.WorkspaceID, agent.ID)
+	if !in.Scoped {
+		toolDefs, err = s.authorizedTools(ctx, conv.WorkspaceID, agent.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +396,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 	// still contain the model's own earlier sentence about this subject; what
 	// changes is that the turn no longer depends on the model deciding to go
 	// and check. The present is simply present.
-	hydrated := s.hydrateSubjects(ctx, in.WorkspaceID, agent.ID, conv.ID, subjects, toolDefs)
+	hydrated := s.hydrateSubjects(ctx, conv.WorkspaceID, agent.ID, conv.ID, subjects, toolDefs)
 
 	// What this turn sends is the Context Builder's decision, not this
 	// function's. See context.go: this one orchestrates a turn, that one
@@ -345,10 +409,14 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 		SourcesUnavailable:  sourcesUnavailable,
 		Tools:               toolDefs,
 		ToolsWithheld:       withheld,
-		Evidence:            evidence,
-		EvidenceUnavailable: evidenceUnavailable,
+		Evidence:            evidence.Tools,
+		Execution:           evidence.Execution,
+		EvidenceUnavailable: evidence.Unavailable,
 		History:             history,
-		Current:             userMsg,
+		Current:             in.Current,
+		// Present only on a resume, and it is the block that tells the model
+		// the work is HALF DONE rather than not started. See resume.go.
+		Resume: in.Resume,
 		// What this turn attached, plus what the thread is about. The merge
 		// is why "essa vaga" still resolves on the fourth message of a
 		// conversation opened from a card.
@@ -365,7 +433,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 		"sources", len(sources),
 		"tools", len(toolDefs),
 		"tools_withheld", withheld,
-		"evidence", len(evidence.Items),
+		"evidence", len(evidence.Tools.Items),
+		"execution_turns", len(evidence.Execution.Turns),
+		"resume", in.Resume != nil,
 		"hydrated_references", len(hydrated),
 		"characters", built.Report.TotalCharacters,
 		"estimated_tokens", built.Report.TotalEstimatedTokens)
@@ -376,7 +446,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 		Creds:        creds,
 		Built:        built,
 		Tools:        toolDefs,
-		Gate:         gate,
+		Gate:         in.Gate,
 	}, sink)
 
 	if turn.openFailure != nil {
@@ -389,6 +459,67 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput, sink Tur
 
 	assistant := s.persistAssistant(ctx, conv, agent, creds, turn.assistantTurn)
 	return assistant, turn.err
+}
+
+// answerInput is what answerTurn needs once the question is settled.
+type answerInput struct {
+	Conv  *domain.Conversation
+	Agent *domain.Agent
+	Creds ports.Credentials
+	Gate  *turnGate
+	// Current is the user turn being answered. On a resume it is the
+	// ORIGINAL question, which is already in the window — the resume does
+	// not write a new one, because nobody asked anything new.
+	Current  *domain.Message
+	Attached []domain.ContextReference
+	ToolDefs []domain.ToolDefinition
+	// Scoped says the caller already resolved the tool set from an explicit
+	// selection, so answerTurn must not read the grants a second time.
+	Scoped   bool
+	Withheld int
+	// Resume describes the interrupted turn this one continues. Nil on an
+	// ordinary turn, which is every turn the module had before resume
+	// existed.
+	Resume *ResumeContext
+}
+
+// withoutInterruptedTurn drops the attempt a resume is replacing.
+//
+// ── Why the wire must not carry it ─────────────────────────────────────
+// Measured against the real gateway, and it is not a preference:
+//
+//	400 AnthropicException — "This model does not support assistant
+//	message prefill. The conversation must end with a user message."
+//
+// A resume replays [user, assistant, user, assistant(interrupted)] and
+// then appends its block as a SYSTEM message. Providers hoist system
+// messages out of the list, so what Anthropic actually receives ends on an
+// assistant turn — which it reads as a prefill and refuses outright. Every
+// resume failed this way, and the scripted test suite could not see it
+// because a fake gateway enforces no such rule.
+//
+// ── Why dropping it is right and not merely convenient ─────────────────
+// The interrupted turn is a HALF-FINISHED ANSWER to the question being
+// answered again. Replaying it invites the model to continue its own
+// sentence instead of doing the work, which is the very thing the provider
+// is guarding against. Everything that attempt actually accomplished is in
+// the resume block, stated as facts with effect refs rather than as prose
+// that trailed off — which is a better record of it than the prose was.
+//
+// The TRANSCRIPT is untouched. The interrupted turn stays visible to the
+// reader, with its receipt; this only decides what one request replays.
+func withoutInterruptedTurn(history []domain.Message, rc *ResumeContext) []domain.Message {
+	if rc == nil {
+		return history
+	}
+	out := make([]domain.Message, 0, len(history))
+	for _, m := range history {
+		if m.ID == rc.MessageID {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 /* ── the loop ────────────────────────────────────────────────────────── */
@@ -521,7 +652,53 @@ func (s *Service) runTurn(ctx context.Context, in runTurnInput, sink TurnSink) r
 				itoa(maxToolRounds) + " times and was stopped"
 			result.err = domain.ToolLoopStopped(errText)
 			s.log.Info("tool round limit reached",
-				"conversation_id", in.Conversation.ID, "rounds", round)
+				"conversation_id", in.Conversation.ID, "rounds", round,
+				"refused_calls", len(call.toolCalls))
+
+			// ── The calls we are refusing are still calls that were asked
+			//    for ──────────────────────────────────────────────────
+			//
+			// NO REQUESTED TOOL DISAPPEARS SILENTLY.
+			//
+			// Until this existed, the ceiling broke before the execution
+			// loop and the model's last request left no trace at all: the
+			// audit held the rounds that ran and nothing about the one
+			// that was stopped. A receipt could then say "two writes
+			// executed" for a turn in which the model asked for three,
+			// and the third was not failed, not refused, not anywhere.
+			//
+			// The runtime HAS taken a decision about these calls, so they
+			// are recorded as what that decision was: NOT_EXECUTED, which
+			// is the status the four gates already use for "the model
+			// asked and we turned it away before it did anything".
+			//
+			// Nothing is executed and nothing is fabricated. There is no
+			// Result, because there was no result; the duration is zero,
+			// because nothing ran. NewWriteReceipt maps this to
+			// WriteNotExecuted and counts it under Refused, so Executed
+			// keeps meaning what it has always meant.
+			//
+			// The sink is told too, with the same terminal frame shape a
+			// refused call already produces, so a live client renders the
+			// stopped request instead of watching it vanish.
+			for _, tc := range call.toolCalls {
+				refusal := domain.ToolError(domain.ToolErrRoundLimit, errText)
+				records = append(records, pendingToolCall{
+					Round: round,
+					Outcome: toolOutcome{
+						Call:    tc,
+						Content: encodeToolFailure(refusal),
+						Status:  domain.ToolCallNotExecuted,
+						Failure: refusal,
+					},
+				})
+				_ = sink.Tool(ToolEvent{
+					CallID:    tc.ID,
+					Name:      tc.Name.String(),
+					Status:    string(domain.ToolCallNotExecuted),
+					ErrorCode: string(domain.ToolErrRoundLimit),
+				})
+			}
 			break
 		}
 		// A user who pressed stop gets no new round, and no tool runs.
@@ -957,12 +1134,22 @@ func (s *Service) persistToolCalls(ctx context.Context, conv *domain.Conversatio
 			rec.External = def.External
 		}
 
+		// Recorded whatever the redaction decides below. The ref is a type
+		// and a UUID — it cannot carry what redaction removes — and it is
+		// the only thing that lets a later turn continue this work instead
+		// of repeating it. See domain/effect_ref.go.
+		rec.EffectRef = c.Outcome.EffectRef
+
 		if confidential {
 			// Arguments and Result stay nil, and Redacted says that nil
 			// means "withheld" rather than "there was nothing". Everything
 			// the trail is for — which tool, which round, how long, ok or
 			// error — is above and is untouched.
 			rec.Redacted = true
+			// The ref is NOT redacted, and that is the whole point. It is a
+			// type and a UUID, it cannot carry what redaction removes, and
+			// it is the only thing that lets a later turn continue this
+			// work instead of repeating it.
 		} else {
 			rec.Result = c.Outcome.Result
 			// Stored as the model produced them. The audit trail records what

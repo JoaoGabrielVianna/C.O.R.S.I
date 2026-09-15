@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,15 +28,19 @@ func NewToolCallRepo(pool *pgxpool.Pool) *ToolCallRepo {
 
 const toolCallCols = `id, workspace_id, conversation_id, message_id, round,
                       provider_call_id, tool_name, arguments, result, redacted,
-                      status, effect, external, error_code, error_message, duration_ms, created_at`
+                      status, effect, external, effect_type, effect_id,
+                      error_code, error_message, duration_ms, created_at`
 
 func scanToolCall(row pgx.Row) (*domain.ToolCallRecord, error) {
 	var r domain.ToolCallRecord
+	var effectType, effectID *string
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.ConversationID, &r.MessageID, &r.Round,
 		&r.ProviderCallID, &r.ToolName, &r.Arguments, &r.Result, &r.Redacted,
-		&r.Status, &r.Effect, &r.External, &r.ErrorCode, &r.ErrorMessage, &r.DurationMS, &r.CreatedAt); err != nil {
+		&r.Status, &r.Effect, &r.External, &effectType, &effectID,
+		&r.ErrorCode, &r.ErrorMessage, &r.DurationMS, &r.CreatedAt); err != nil {
 		return nil, err
 	}
+	r.EffectRef = readEffectRef(effectType, effectID)
 	return &r, nil
 }
 
@@ -49,11 +54,12 @@ func (r *ToolCallRepo) CreateMany(ctx context.Context, records []domain.ToolCall
 		return nil
 	}
 
-	const perRow = 15
+	const perRow = 17
 	args := make([]any, 0, len(records)*perRow)
 	q := `INSERT INTO chat.tool_calls
 	      (workspace_id, conversation_id, message_id, round, provider_call_id,
 	       tool_name, arguments, result, redacted, status, effect, external,
+	       effect_type, effect_id,
 	       error_code, error_message, duration_ms) VALUES `
 
 	for i, rec := range records {
@@ -61,13 +67,24 @@ func (r *ToolCallRepo) CreateMany(ctx context.Context, records []domain.ToolCall
 			q += ", "
 		}
 		base := i * perRow
-		q += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8,
-			base+9, base+10, base+11, base+12, base+13, base+14, base+15)
+		ph := make([]string, perRow)
+		for j := range ph {
+			ph[j] = fmt.Sprintf("$%d", base+j+1)
+		}
+		q += "(" + strings.Join(ph, ", ") + ")"
+		// Both halves or neither, which is what the CHECK enforces too. A
+		// ref that failed validation upstream arrives here as nil and is
+		// stored as two nulls: no identity reported, never a partial one.
+		var effectType, effectID *string
+		if rec.EffectRef != nil && rec.EffectRef.Valid() {
+			t, id := rec.EffectRef.Type, rec.EffectRef.ID
+			effectType, effectID = &t, &id
+		}
 		args = append(args,
 			rec.WorkspaceID, rec.ConversationID, rec.MessageID, rec.Round,
 			rec.ProviderCallID, string(rec.ToolName), rec.Arguments, rec.Result,
 			rec.Redacted, string(rec.Status), string(rec.Effect), rec.External,
+			effectType, effectID,
 			string(rec.ErrorCode), rec.ErrorMessage, rec.DurationMS)
 	}
 
@@ -175,7 +192,8 @@ func (r *ToolCallRepo) WriteReceiptsFor(ctx context.Context, workspaceID uuid.UU
 		return out, nil
 	}
 	rows, err := postgres.Conn(ctx, r.pool).Query(ctx, `
-		SELECT id, message_id, tool_name, status, effect, error_code, duration_ms, created_at
+		SELECT id, message_id, tool_name, status, effect, effect_type, effect_id,
+		       error_code, duration_ms, created_at
 		  FROM chat.tool_calls
 		 WHERE workspace_id = $1 AND message_id = ANY($2) AND effect = 'write'
 		 ORDER BY message_id, round, id`, workspaceID, messageIDs)
@@ -187,10 +205,13 @@ func (r *ToolCallRepo) WriteReceiptsFor(ctx context.Context, workspaceID uuid.UU
 	grouped := map[uuid.UUID][]domain.ToolCallRecord{}
 	for rows.Next() {
 		var rec domain.ToolCallRecord
+		var effectType, effectID *string
 		if err := rows.Scan(&rec.ID, &rec.MessageID, &rec.ToolName, &rec.Status,
-			&rec.Effect, &rec.ErrorCode, &rec.DurationMS, &rec.CreatedAt); err != nil {
+			&rec.Effect, &effectType, &effectID,
+			&rec.ErrorCode, &rec.DurationMS, &rec.CreatedAt); err != nil {
 			return nil, err
 		}
+		rec.EffectRef = readEffectRef(effectType, effectID)
 		grouped[rec.MessageID] = append(grouped[rec.MessageID], rec)
 	}
 	if err := rows.Err(); err != nil {
@@ -256,4 +277,22 @@ func (r *ToolCallRepo) ReadReceiptsFor(ctx context.Context, workspaceID uuid.UUI
 		out[id] = domain.NewReadReceipt(id, available, recs)
 	}
 	return out, nil
+}
+
+// readEffectRef rebuilds a ref from its two columns.
+//
+// Anything that does not satisfy the domain contract comes back nil. The
+// database already refuses a malformed one — `effect_id` is a uuid and a
+// CHECK bounds the type — so this is the second lock on a door that should
+// not open: an identifier that cannot be trusted must read as absent, never
+// as approximate, because a resume follows it.
+func readEffectRef(effectType, effectID *string) *domain.EffectRef {
+	if effectType == nil || effectID == nil {
+		return nil
+	}
+	ref := domain.EffectRef{Type: *effectType, ID: *effectID}
+	if !ref.Valid() {
+		return nil
+	}
+	return &ref
 }

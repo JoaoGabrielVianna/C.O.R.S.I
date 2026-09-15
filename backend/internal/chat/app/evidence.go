@@ -62,12 +62,19 @@ import (
 // cannot exist.
 //
 // Degrades like memory: a failed read costs continuity, not the turn.
+//
+// ── Why it returns two blocks from one read ────────────────────────────
+// Because they are two projections of the same rows over the same window,
+// and issuing a second query for the second projection would create a
+// second window — the exact mistake the paragraph above refuses for the
+// budget. One read, one scope, and the two blocks cannot end a turn
+// disagreeing about which turns they describe.
 func (s *Service) evidenceForTurn(
 	ctx context.Context,
 	workspaceID, conversationID uuid.UUID,
 	history []domain.Message,
 	subjects []domain.ContextReference,
-) (EvidenceSelection, bool) {
+) turnEvidence {
 	ids := make([]uuid.UUID, 0, len(history))
 	for _, m := range history {
 		if m.Role == domain.RoleAssistant {
@@ -75,17 +82,51 @@ func (s *Service) evidenceForTurn(
 		}
 	}
 	if len(ids) == 0 {
-		return EvidenceSelection{}, false
+		return turnEvidence{}
 	}
 
 	records, err := s.repos.ToolCalls.ListByMessages(ctx, workspaceID, conversationID, ids)
 	if err != nil {
 		s.log.Warn("read tool evidence for turn",
 			"conversation_id", conversationID, "err", err)
-		return EvidenceSelection{}, true
+		// Both blocks degrade together, because one read failed and neither
+		// can be derived without it. Unavailable is NOT "nothing happened":
+		// the report records it as a degradation and the block is omitted
+		// rather than rendered as an empty record, so the model is never
+		// shown a silence it could read as proof.
+		return turnEvidence{Unavailable: true}
 	}
+
+	// Execution is derived from the RAW records, before the subject filter.
+	//
+	// dropReadingsOfSubjects exists to stop a stale READING of the
+	// conversation's subject being replayed as though it were still true.
+	// That argument is about payloads going out of date, and it has no
+	// bearing on whether a call ran: a write whose arguments happen to name
+	// the subject is still a write that happened, and removing it here would
+	// erase a real execution to solve a freshness problem it does not have.
+	execution := SelectExecutionEvidence(ids, records, ExecutionBudgetChars)
+
 	records = dropReadingsOfSubjects(records, subjects)
-	return SelectEvidence(records, EvidenceBudgetChars, EvidenceMaxResultChars), false
+	return turnEvidence{
+		Tools:     SelectEvidence(records, EvidenceBudgetChars, EvidenceMaxResultChars),
+		Execution: execution,
+	}
+}
+
+// turnEvidence is what one read of the audit trail yields for one turn.
+//
+// A struct rather than three returns because the third was a bare bool that
+// meant "the read failed", and a caller passing it to the wrong parameter of
+// BuildContext would silently report the wrong block as degraded.
+type turnEvidence struct {
+	// Tools is what earlier capabilities OBSERVED — payload, from outside.
+	Tools EvidenceSelection
+	// Execution is what earlier capabilities DID — no payload, from here.
+	Execution ExecutionEvidence
+	// Unavailable says the read failed, and covers both: they came from one
+	// query, so there is no state in which one is known and the other is not.
+	Unavailable bool
 }
 
 // dropReadingsOfSubjects removes earlier tool results that read an entity

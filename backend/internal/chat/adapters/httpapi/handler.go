@@ -113,6 +113,10 @@ func (h *Handler) Mount(r chi.Router) {
 		// Streams the reply as Server-Sent Events rather than returning a
 		// document. See sendMessage in stream.go.
 		r.Post("/{id}/messages", h.sendMessage)
+		// Continue a turn that stopped with work already done. Not a
+		// message: it adds no question, it finishes answering the one
+		// already there. See resumeMessage in stream.go.
+		r.Post("/{id}/resume", h.resumeMessage)
 		// Reads this thread as it stands and proposes what is worth
 		// remembering. A POST because it spends money and writes a receipt,
 		// and a sub-resource of the conversation because the conversation is

@@ -645,6 +645,17 @@ func TestSeveralToolsInOneRound(t *testing.T) {
 // A model that keeps asking is stopped, and stopped in a way the user can
 // read. The point is not that the loop ends; it is that it ends at a known
 // number of paid provider calls.
+// maxToolRoundsForTest is the ceiling as the tests assert it.
+//
+// It is a SECOND, independent statement of the number rather than a
+// reference to app.maxToolRounds, and deliberately: a test that imported
+// the constant would keep passing if somebody changed it, which is the one
+// change this assertion exists to notice. Raising the ceiling means editing
+// it here too, on purpose.
+//
+//	4 provider calls  ·  3 rounds of tool execution  ·  the 4th refused
+const maxToolRoundsForTest = 4
+
 func TestToolRoundLimitStopsTheLoop(t *testing.T) {
 	e := newEnv(t)
 	s := e.grantedAgent(e.wsA)
@@ -666,11 +677,12 @@ func TestToolRoundLimitStopsTheLoop(t *testing.T) {
 		t.Fatalf("error frame = %s, want the round limit named", f.data)
 	}
 
-	// Three rounds of asking, and no fourth call: the ceiling is checked
+	// Four rounds of asking, and no fifth call: the ceiling is checked
 	// before the tools run, so the round that cannot be answered is not paid
 	// for either.
-	if e.llm.streamCalls != 3 {
-		t.Fatalf("the provider was called %d times, want the ceiling of 3", e.llm.streamCalls)
+	if e.llm.streamCalls != maxToolRoundsForTest {
+		t.Fatalf("the provider was called %d times, want the ceiling of %d",
+			e.llm.streamCalls, maxToolRoundsForTest)
 	}
 
 	turns := e.assistantTurns(e.wsA, s.conversationID)
@@ -678,9 +690,43 @@ func TestToolRoundLimitStopsTheLoop(t *testing.T) {
 		t.Fatalf("finish_reason = %+v, want tool_round_limit recorded on the turn", turns)
 	}
 
-	// Two rounds ran their tools; the third was stopped before executing.
-	if n := len(e.toolCalls(e.wsA, s.conversationID)); n != 2 {
-		t.Fatalf("%d tool executions, want 2 (the third round never ran)", n)
+	// ── Three rounds RAN, and the fourth is recorded as refused ────────
+	//
+	// NO REQUESTED TOOL DISAPPEARS SILENTLY.
+	//
+	// One audit row per request: three executions and one call the runtime
+	// turned away before it did anything. The refusal used to be missing
+	// entirely, which meant the model's last request left no trace at all
+	// and a receipt could not say that one more had been asked for.
+	calls := e.toolCalls(e.wsA, s.conversationID)
+	if len(calls) != maxToolRoundsForTest {
+		t.Fatalf("%d audit rows, want %d: %d executions and one refusal",
+			len(calls), maxToolRoundsForTest, maxToolRoundsForTest-1)
+	}
+	executed, refused := 0, 0
+	for _, c := range calls {
+		switch c.Status {
+		case string(domain.ToolCallOK):
+			executed++
+		case string(domain.ToolCallNotExecuted):
+			refused++
+			if c.ErrorCode != string(domain.ToolErrRoundLimit) {
+				t.Errorf("the refused call carries error_code %q, want %q",
+					c.ErrorCode, domain.ToolErrRoundLimit)
+			}
+			if c.Result != nil {
+				t.Errorf("the refused call carries a result: %q", *c.Result)
+			}
+		default:
+			t.Errorf("unexpected status %q", c.Status)
+		}
+	}
+	if executed != maxToolRoundsForTest-1 {
+		t.Errorf("%d executions, want %d (the last round never ran)",
+			executed, maxToolRoundsForTest-1)
+	}
+	if refused != 1 {
+		t.Errorf("%d refusals recorded, want 1", refused)
 	}
 }
 

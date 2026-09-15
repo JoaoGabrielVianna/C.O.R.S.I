@@ -644,7 +644,11 @@ type ToolCallRecord struct {
 	// Stored rather than looked up, for the reason migration 0020 gives:
 	// the registry describes the build running now, not the build that ran
 	// then.
-	External     bool          `json:"external"`
+	External bool `json:"external"`
+	// EffectRef is the entity this call touched, when the capability
+	// reported one. Nil is the common case and means "no identity was
+	// reported" — never "unknown, guess". See domain/effect_ref.go.
+	EffectRef    *EffectRef    `json:"effect_ref,omitempty"`
 	ErrorCode    ToolErrorCode `json:"error_code,omitempty"`
 	ErrorMessage string        `json:"error_message,omitempty"`
 	DurationMS   int           `json:"duration_ms"`
@@ -703,6 +707,15 @@ type WriteExecution struct {
 	// ErrorCode is present on FAILED and NOT_EXECUTED. It is a code, not a
 	// message, because a message can carry the very data redaction removed.
 	ErrorCode ToolErrorCode `json:"error_code,omitempty"`
+	// Ref identifies WHAT this write touched, when the capability reported
+	// it. It is the difference between "a create ran" and "THIS room
+	// exists", and it is what makes a resume able to continue instead of
+	// starting over. Absent on most writes, and absent is safe: a resume
+	// with no ref has to read.
+	//
+	// It carries no name and no content by construction — see
+	// domain.EffectRef on why the id is a UUID.
+	Ref *EffectRef `json:"ref,omitempty"`
 }
 
 // WriteReceipt is one assistant turn's answer to "did anything change?".
@@ -747,6 +760,11 @@ func NewWriteReceipt(messageID uuid.UUID, records []ToolCallRecord) WriteReceipt
 			OccurredAt: rec.CreatedAt,
 			DurationMS: rec.DurationMS,
 			ErrorCode:  rec.ErrorCode,
+			// Carried only when the stored ref is still well formed. A row
+			// that somehow holds a malformed one is reported as having no
+			// identity rather than a broken one: the fallback is a read,
+			// and a read is always correct.
+			Ref: validRef(rec.EffectRef),
 		}
 		switch rec.Status {
 		case ToolCallOK:
@@ -762,6 +780,20 @@ func NewWriteReceipt(messageID uuid.UUID, records []ToolCallRecord) WriteReceipt
 			w.Status = WriteRequested
 		}
 		r.Writes = append(r.Writes, w)
+	}
+	return r
+}
+
+// validRef passes a ref through only if it still satisfies the contract.
+//
+// Defence in depth rather than paranoia about the database: the column is
+// a uuid and a CHECK bounds the type, so a bad value should be impossible.
+// If one appears anyway, the honest report is "no identity", because an
+// identifier that cannot be trusted is worse than none — it would send a
+// resume to continue the wrong entity with full confidence.
+func validRef(r *EffectRef) *EffectRef {
+	if r == nil || !r.Valid() {
+		return nil
 	}
 	return r
 }

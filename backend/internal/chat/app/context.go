@@ -114,10 +114,28 @@ type ContextInput struct {
 	// on every turn of every conversation that never ran a tool, which keeps
 	// those turns byte-identical to what they were before this field existed.
 	Evidence EvidenceSelection
+	// Execution is what earlier turns of this conversation actually DID:
+	// which write capabilities ran and how each one ended. It carries no
+	// arguments and no results — see app/execution.go — so it is the one
+	// block a Confidential capability contributes to on equal terms.
+	//
+	// Empty on every turn of every conversation that never wrote anything,
+	// which keeps those turns byte-identical to what they were before this
+	// field existed.
+	Execution ExecutionEvidence
 	// EvidenceUnavailable says the audit-trail read failed. Same distinction
 	// as MemoryUnavailable: "this conversation observed nothing" and "we
 	// could not find out what it observed" are different facts.
+	//
+	// It covers Execution as well, because both come from one read. The
+	// distinction matters more for that block than for any other: an empty
+	// execution record would be read as "nothing ran", and a failed read must
+	// never be able to say that.
 	EvidenceUnavailable bool
+	// Resume describes the interrupted attempt this turn continues, when it
+	// continues one. Nil on every ordinary turn, which keeps those turns
+	// byte-identical to what they were before resume existed.
+	Resume *ResumeContext
 	// History is the trailing window of the thread in reading order, with
 	// Current as its last entry.
 	History []domain.Message
@@ -184,8 +202,22 @@ func BuildContext(in ContextInput) BuiltContext {
 	a.referenceState(in.HydratedReferences)
 	a.memory(in.Memories, in.MemoryUnavailable)
 	a.sources(in.Sources, in.SourcesUnavailable)
+	// Execution above evidence, and the order is the authority order the
+	// whole list follows. This block is derived by this system from its own
+	// log; the one below it is payload written by other people. A reader
+	// scanning downward meets what is certain before what is merely
+	// observed.
+	a.execution(in.Execution, in.EvidenceUnavailable)
 	a.evidence(in.Evidence, in.EvidenceUnavailable)
 	a.conversation(in.History, in.Current)
+	// LAST, and deliberately below the conversation.
+	//
+	// Every other block is material the model reasons FROM; this one is an
+	// instruction about what to do NOW, and it is answering a question that
+	// is already on screen above it. It is also the block whose wording has
+	// to survive a model that has just read an interrupted exchange and is
+	// inclined to start it over.
+	a.resume(in.Resume)
 
 	if in.PromptCache {
 		a.markStablePrefix()
@@ -416,7 +448,9 @@ var blockKinds = []domain.BlockKind{
 	domain.BlockInstructions, domain.BlockTools,
 	domain.BlockContextReferences, domain.BlockReferenceState,
 	domain.BlockMemory, domain.BlockSources,
-	domain.BlockHistory, domain.BlockCurrentMessage, domain.BlockToolResults,
+	domain.BlockExecutionEvidence, domain.BlockToolEvidence,
+	domain.BlockHistory, domain.BlockCurrentMessage,
+	domain.BlockResume, domain.BlockToolResults,
 }
 
 // block returns the accumulator for a kind, creating it on first use so
@@ -922,6 +956,67 @@ func RenderSourcesBlock(sources []domain.Source) string {
 		b.WriteString(s.Content)
 	}
 	return b.String()
+}
+
+/* ── resume ──────────────────────────────────────────────────────────── */
+
+// resume tells a continuing turn what the interrupted attempt already did.
+//
+// There is no unavailable path and no budget. The block is built from a
+// receipt the caller already read, it is bounded by the number of writes
+// one turn could make, and a turn that cannot produce it is not a resume at
+// all — ResumeTurn refuses before reaching the builder.
+func (a *contextAssembler) resume(rc *ResumeContext) {
+	block, ok := resumeBlockOf(rc)
+	if !ok {
+		return
+	}
+	a.append(domain.BlockResume, "system", block)
+	if b := a.block(domain.BlockResume); b != nil {
+		// One item: one interrupted attempt. A resume continues exactly one.
+		b.Items = 1
+	}
+}
+
+/* ── execution evidence ──────────────────────────────────────────────── */
+
+// execution puts what this conversation's earlier turns DID between the
+// reference material and what those turns observed.
+//
+// ── Why the unavailable path omits the block entirely ──────────────────
+// Memory renders nothing when it cannot be read, and the cost of that is a
+// turn with less context. Here the cost would be worse than that: an empty
+// execution record is not neutral, it is a statement, and a model reading
+// one would conclude that nothing ran. So a failed read produces no block
+// and a recorded degradation, which is the only combination that says "we
+// do not know" rather than "nothing happened".
+//
+// ── Why it degrades instead of failing the turn ────────────────────────
+// Same trade as memory and evidence. Losing it costs continuity, never
+// safety: the guarantee it supports is that the product does not present a
+// denial as fact, and the receipt beside the message still holds whether or
+// not the model was told about it.
+func (a *contextAssembler) execution(ev ExecutionEvidence, unavailable bool) {
+	if unavailable {
+		a.exclude(domain.BlockExecutionEvidence, domain.ReasonUnavailable, 0)
+		return
+	}
+	if ev.DroppedTurns > 0 {
+		a.excludeN(domain.BlockExecutionEvidence, domain.ReasonBudget, ev.DroppedTurns, ev.DroppedChars)
+	}
+	if ev.Empty() {
+		// No header on its own, same as memory and evidence — and here the
+		// rule is load-bearing rather than tidy. A conversation that has
+		// written nothing sends nothing, so the block's presence is itself
+		// meaningful and it never appears saying zero.
+		return
+	}
+	a.append(domain.BlockExecutionEvidence, "system", RenderExecutionBlock(ev.Turns))
+	if b := a.block(domain.BlockExecutionEvidence); b != nil {
+		// Turns, not entries and not the one message they were rendered into.
+		// "2 items" for two earlier turns is the fact a reader is checking.
+		b.Items = len(ev.Turns)
+	}
 }
 
 /* ── tool evidence ───────────────────────────────────────────────────── */

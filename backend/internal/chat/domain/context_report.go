@@ -65,6 +65,34 @@ const (
 	// them apart could not answer "did this turn actually run anything?",
 	// which is the first question anyone asks of a turn that used tools.
 	BlockToolEvidence BlockKind = "tool_evidence"
+	// BlockExecutionEvidence is what EARLIER turns of this conversation
+	// actually DID: the write capabilities that ran, and how each one ended.
+	//
+	// ── Why it is not BlockToolEvidence ────────────────────────────────
+	// They are opposites, and folding them together would be a lie about
+	// provenance in both directions. Tool evidence is PAYLOAD that came from
+	// outside this system — file contents, descriptions, somebody else's
+	// prose — and its header says so, because it has to be read as data that
+	// may not be trusted. This block contains no payload at all: a capability
+	// name, an outcome, a count, all of them derived by this system from its
+	// own execution log. Putting our execution facts under a header that
+	// disclaims them as untrusted outside content would teach the model to
+	// discount the one record that is authoritative.
+	//
+	// The lifetimes differ too. A Confidential capability contributes NOTHING
+	// to tool evidence — its payload is not kept, so there is nothing to
+	// replay — and it contributes here exactly like any other, because what
+	// is carried was never its payload.
+	//
+	// ── What it exists to close ────────────────────────────────────────
+	// The mirror of the defect WriteReceipt answers. A live agent executed
+	// `artifact.create`, the receipt recorded EXECUTED, and on the next turn
+	// the model said "na verdade eu não cheguei a criar — só respondi como se
+	// tivesse". It was reasoning correctly from what it could see: the
+	// payload was withheld, its own earlier sentence is not the record, and
+	// nothing in the turn said the call had run. Told nothing, it asserted
+	// the negative, and then wrote the same thing again.
+	BlockExecutionEvidence BlockKind = "execution_evidence"
 	// BlockContextReferences names the ENTITIES this turn is about: the
 	// subjects the user attached, plus whatever the thread was opened from.
 	//
@@ -80,6 +108,18 @@ const (
 	// It carries identity, not entities: no stage, no state, no snapshot.
 	// See app/context_references.go.
 	BlockContextReferences BlockKind = "context_references"
+	// BlockResume is what a CONTINUING turn is told about the attempt it
+	// continues: which writes already executed, which entities they touched,
+	// what is still pending, and why the first attempt stopped.
+	//
+	// ── Why it is not BlockExecutionEvidence ───────────────────────────
+	// Execution evidence is a passive record of what earlier turns did,
+	// carried on every turn of a conversation that wrote anything. This is
+	// an instruction about ONE attempt, present only on a resume, and it
+	// tells the model what to DO — continue, do not repeat. Folding them
+	// together would make every ordinary turn carry resume wording, and
+	// would lose which attempt a continuation is bound to.
+	BlockResume BlockKind = "resume"
 	// BlockReferenceState is the PRESENT state of the subjects above, read
 	// from their providers at the start of this turn.
 	//

@@ -310,6 +310,38 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]any) (domain.ToolOutput, error)
 }
 
+// EffectReporter is an OPTIONAL second contract: a capability that can say
+// which entity a successful call touched.
+//
+// ── Why it is the capability that says, and not the runtime ────────────
+// The same argument Confidential and External already make. Only the
+// capability knows the shape of its own output and which field in it is an
+// identity rather than content. Teaching the runtime to go fishing for
+// something that "looks like an id" in a payload it is about to redact
+// would be inference dressed as a contract, and it would be wrong the first
+// time a tool returned two ids.
+//
+// So this is declared, per capability, and it is opt-in: the 47 tools that
+// do not implement it report nothing, which is a safe answer and not a
+// missing one.
+//
+// ── Why it takes the output instead of returning it from Execute ───────
+// Because changing Execute's signature would touch every tool in the
+// product to serve the handful that have an identity worth reporting. This
+// is called immediately after a SUCCESSFUL execution, with that execution's
+// own output, before anything is redacted.
+//
+// ── What it must not do ────────────────────────────────────────────────
+// Return content. The ref is a type and a UUID; see domain.EffectRef, which
+// refuses anything else. A capability that cannot express its identity that
+// way returns false, and the resume falls back to reading — which is the
+// behaviour we want anyway.
+type EffectReporter interface {
+	// EffectRefOf names the entity this output identifies, or false when
+	// the call touched nothing nameable. Never called for a failed call.
+	EffectRefOf(out domain.ToolOutput) (domain.EffectRef, bool)
+}
+
 // --- context references ---------------------------------------------------
 
 // ResolvedReference is what a provider says about one of its entities.

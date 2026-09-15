@@ -1246,6 +1246,18 @@ func TestUpstreamFailurePreservesTheQuestion(t *testing.T) {
 // TestMidStreamFailureKeepsPartialText covers the other half: once frames
 // are flowing there is no status code left, so the failure arrives inside
 // the stream and whatever text already landed is kept.
+//
+// ── Why the frames are `delta done error` and not `delta error` ────────
+// A mid-stream failure still persists an assistant message, with the
+// partial text and `finish_reason = error`. `done` is the frame that
+// DELIVERS that persisted state, receipts included, and withholding it
+// meant a consumer reading only the stream could not see what the turn
+// left behind. The rule is generic: a terminal error that has a persisted
+// message to hand over emits `done` first and then `error`.
+//
+// `done` therefore means "here is the final persisted state", never "the
+// turn succeeded". The authority on success is `finish_reason` and the
+// `error` frame that follows. See sseSink.writeDone.
 func TestMidStreamFailureKeepsPartialText(t *testing.T) {
 	e := newEnv(t)
 	s := e.seed(e.wsA)
@@ -1259,12 +1271,29 @@ func TestMidStreamFailureKeepsPartialText(t *testing.T) {
 	wantStatus(t, rec, http.StatusOK)
 
 	frames := parseSSE(t, rec.Body.String())
-	if names := eventNames(frames); strings.Join(names, ",") != "delta,error" {
-		t.Fatalf("frames = %v, want delta then error", names)
+	if names := eventNames(frames); strings.Join(names, ",") != "delta,done,error" {
+		t.Fatalf("frames = %v, want delta then done then error", names)
 	}
 	errFrame, _ := frameOf(frames, "error")
 	if !strings.Contains(errFrame.data, `"code":"upstream"`) {
 		t.Fatalf("error frame = %s, want the wire error contract", errFrame.data)
+	}
+	// The done frame carries the persisted turn and its receipts, which is
+	// the whole reason it is emitted on a failure: a consumer that reads
+	// only the stream can still see what the turn left behind.
+	doneFrame, ok := frameOf(frames, "done")
+	if !ok {
+		t.Fatal("the failed turn delivered no final state")
+	}
+	if !strings.Contains(doneFrame.data, `"write_receipt"`) {
+		t.Fatalf("done frame carries no write receipt: %s", doneFrame.data)
+	}
+	if !strings.Contains(doneFrame.data, `"read_receipt"`) {
+		t.Fatalf("done frame carries no read receipt: %s", doneFrame.data)
+	}
+	// And it is not claiming success: the message inside says it failed.
+	if !strings.Contains(doneFrame.data, `"finish_reason":"error"`) {
+		t.Fatalf("done frame does not carry the failure: %s", doneFrame.data)
 	}
 
 	msgs := e.messages(e.wsA, s.conversationID)

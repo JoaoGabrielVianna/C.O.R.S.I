@@ -144,10 +144,114 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		ContextReferences: toContextReferences(req.ContextReferences),
 	}, sink)
 
+	h.finishStream(w, sink, msg, err)
+}
+
+// resumeRequest names the interrupted turn to continue.
+//
+// The id is required and is not optional sugar. A resume with no target
+// would mean "continue whatever you think I meant", and the one thing this
+// endpoint exists to remove is the guessing that "Try again" invited.
+type resumeRequest struct {
+	MessageID uuid.UUID `json:"message_id"`
+}
+
+// resumeMessage continues an interrupted turn.
+//
+// ── Why this is a route and not a flag on sendMessage ──────────────────
+// Because it carries no content, and a send with no content is a bad
+// request everywhere else in this API. More importantly the two mean
+// different things to the transcript: a send adds a question, a resume adds
+// none. Expressing that as an empty field on the send path would leave the
+// distinction to whoever remembered to check it.
+//
+// It streams exactly like a send — the same sink, the same frames, the same
+// receipts — because to a reader it IS the same turn arriving, just later.
+func (h *Handler) resumeMessage(w http.ResponseWriter, r *http.Request) {
+	ws, ok := h.workspaceID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.pathID(w, r)
+	if !ok {
+		return
+	}
+	var req resumeRequest
+	if !h.decode(w, r, &req) {
+		return
+	}
+
+	sink := newSSESink(w, r.Context(), h.log)
+	sink.receipts = func(messageID uuid.UUID) (domain.WriteReceipt, error) {
+		got, err := h.svc.WriteReceipts(context.WithoutCancel(r.Context()), ws, []uuid.UUID{messageID})
+		if err != nil {
+			return domain.WriteReceipt{}, err
+		}
+		return got[messageID], nil
+	}
+	sink.readReceipts = func(messageID uuid.UUID) (domain.ReadReceipt, error) {
+		got, err := h.svc.ReadReceipts(context.WithoutCancel(r.Context()), ws, id, []uuid.UUID{messageID})
+		if err != nil {
+			return domain.ReadReceipt{}, err
+		}
+		return got[messageID], nil
+	}
+
+	msg, err := h.svc.ResumeTurn(r.Context(), app.ResumeInput{
+		WorkspaceID:    ws,
+		ConversationID: id,
+		MessageID:      req.MessageID,
+	}, sink)
+
+	h.finishStream(w, sink, msg, err)
+}
+
+// finishStream is the terminal half both streaming routes share.
+//
+// It is one function because the rule it encodes is subtle and was already
+// got wrong once: `done` MEANS "here is what was written", NOT "the turn
+// succeeded", so a failure after the stream opened still delivers the final
+// state before the error. A second copy of that would be the place a resume
+// quietly stopped reporting what it had done.
+func (h *Handler) finishStream(w http.ResponseWriter, sink *sseSink, msg *domain.Message, err error) {
+
 	if err != nil {
 		if !sink.opened {
+			// Nothing was streamed and nothing equivalent was persisted to
+			// deliver: the very first call never reached the model, so
+			// there is a status code left to send and no final state to
+			// hand over. Unchanged, and deliberately outside the rule
+			// below.
 			h.writeDomainErr(w, err)
 			return
+		}
+		// ── The turn failed AND left a final state behind ───────────
+		//
+		// NO HIDDEN EXECUTION AFTER TURN FAILURE.
+		//
+		// SendMessage returns a persisted assistant message and a terminal
+		// error TOGETHER whenever a turn dies after it had already done
+		// something: the ceiling was reached, the budget refused another
+		// call, the gateway dropped the stream. In every one of those the
+		// message is written, the audit rows are written, and the tools
+		// that ran really ran.
+		//
+		// The stream used to drop that message on the floor and send only
+		// `error`. Since `done` is the only frame carrying the receipts, a
+		// turn that executed writes reported none of them: the executions
+		// were real, recorded, and invisible to anyone reading the stream.
+		// The web client happens to survive this because it refetches the
+		// transcript either way, which is an accident of that client
+		// rather than a property of the protocol.
+		//
+		// ── Why this is not keyed on the kind of error ──────────────
+		// The condition is "was a final state persisted", not "which
+		// failure was it". Writing `if KindToolLoop` would fix the round
+		// limit and leave the budget refusal and the mid-turn gateway
+		// failure exactly as broken, which is how three instances of one
+		// bug become one fix and two survivors.
+		if msg != nil {
+			sink.writeDone(msg)
 		}
 		sink.writeError(err)
 		return
@@ -257,6 +361,29 @@ func (s *sseSink) Tool(ev app.ToolEvent) error {
 	return s.event("tool", ev)
 }
 
+// writeDone delivers the turn's FINAL PERSISTED STATE.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	`done` MEANS "HERE IS WHAT WAS WRITTEN", NOT "THE TURN SUCCEEDED"
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// It is emitted for a turn that answered normally AND for one that died
+// after having already done something, because in both cases there is a
+// persisted message, an audit trail and receipts, and a consumer that
+// cannot see them cannot tell what happened to its request.
+//
+// The authority on success or failure is elsewhere and stays elsewhere:
+// `message.finish_reason`, `message.error`, and the `error` frame that
+// follows this one when the turn failed. A client that reads `done` as
+// "it worked" was already wrong before this frame started being emitted
+// on the failure path, because a turn can finish normally having failed
+// every tool it called.
+//
+// The frame is NOT renamed in this change. The name is part of a wire
+// contract with a client that is already deployed, and a rename would be
+// a second, larger change riding on a bug fix.
 func (s *sseSink) writeDone(msg *domain.Message) {
 	// msg is nil only when the post-turn write-back failed; the reply was
 	// still delivered, so the stream closes normally and the client keeps

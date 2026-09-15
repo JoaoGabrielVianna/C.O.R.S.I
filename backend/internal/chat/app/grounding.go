@@ -88,6 +88,31 @@ package app
 // itself. And it is defence in depth, not the guarantee — the guarantee is
 // the read receipt, which holds whether or not the model reads this.
 
+// ── Why a paragraph about the execution record was added ───────────────
+// Because the policy was right and incomplete in the one remaining
+// direction. It had a great deal to say about not asserting what was never
+// observed, and nothing at all about the opposite error: DENYING something
+// that was.
+//
+// A live agent executed a write, the receipt recorded EXECUTED, and on the
+// next turn it said "na verdade eu não cheguei a criar — só respondi como
+// se tivesse". It was not being careless; it was applying this very policy.
+// The capability withheld its payload, so there was no result to re-read;
+// its own earlier sentence is not the record, and it knows that. Told
+// nothing either way, the honest-seeming move was to disclaim — and having
+// disclaimed, it wrote the same thing again.
+//
+// So the policy learns the symmetric rule, and it is generic: a system that
+// records what ran is authority for whether it ran, in both directions. The
+// paragraph names no module, no capability and no vendor, exactly like the
+// three before it, and it is placed inside the cached prefix so it costs
+// approximately one prompt per agent rather than one per turn.
+//
+// Its last sentence is the boundary, and it is the half that must not be
+// lost: RECEIPT PROVES EXECUTION, READ PROVES STATE. Knowing that a write
+// ran is not knowing what it wrote, and a model that read the first as the
+// second would start reconstructing the payload redaction removed.
+
 // groundingPolicy is the whole of it.
 //
 // Every sentence is load-bearing, and the order is the order a model reads
@@ -106,7 +131,9 @@ Judge how much to check: if the context already answers the question, answer fro
 
 When a lookup would settle the question, do it and then answer: offering to look, and waiting to be told to, is not an answer, because the user already asked. Check the few things most likely to settle it, not everything in reach. A capability that CHANGES something is the exception, used only when the user asked for that change.
 
-Some capabilities read systems outside this product and say so in their declaration. What such a system holds NOW — counts, metrics, what was published — must come from calling one this turn; an earlier reading is stale, not weak. If the call fails, say it failed.`
+Some capabilities read systems outside this product and say so in their declaration. What such a system holds NOW — counts, metrics, what was published — must come from calling one this turn; an earlier reading is stale, not weak. If the call fails, say it failed.
+
+An execution log records what actually ran and may be shown to you for earlier turns. Never deny doing what it records as executed, and never treat a withheld payload as proof that a call did not run. It proves nothing beyond that: for what was written, or what anything holds now, read it with a capability this turn.`
 
 // GroundingPolicyCharacters is what the policy costs, in runes.
 //

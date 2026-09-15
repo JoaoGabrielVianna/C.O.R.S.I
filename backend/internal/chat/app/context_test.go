@@ -1343,7 +1343,36 @@ func TestThePolicyStaysSmall(t *testing.T) {
 	//
 	// The ceiling keeps ~10% headroom over the measured text, unchanged in
 	// method from the two raises before it.
-	const ceiling = 700
+	// ── Raised to 880, 2026-09-13, and this is the decision record ──
+	//
+	// The policy gained a paragraph about the execution log: what it
+	// settles, and what it does not.
+	//
+	// It was added because the failure this time was the MIRROR of every
+	// one before it. The three paragraphs above all guard against claiming
+	// what was never observed; none of them guarded against denying what
+	// was. A live agent executed a write, the receipt recorded EXECUTED,
+	// and on the next turn it said it had not done it — then, believing
+	// that, wrote the same thing again. It was applying this policy
+	// correctly: the payload was withheld, and its own earlier sentence is
+	// not the record.
+	//
+	// The cost is ~162 estimated tokens, and it is the most defensible
+	// raise of the four for a reason that did not exist before: since the
+	// caching work, the policy sits INSIDE the cached prefix, so after the
+	// first turn of an agent's life it is billed at cache-read rates rather
+	// than in full. The ceiling still exists because the other half of the
+	// argument is untouched by that — a policy that grows into an essay is
+	// one the model stops reading in the middle, whatever it costs.
+	//
+	// The draft was 266 tokens and this test refused it. It was cut to the
+	// four facts that are load-bearing (there is a log; do not deny what it
+	// records; a withheld payload is not an absent call; it does not prove
+	// state) and nothing else.
+	//
+	// The ceiling keeps ~10% headroom over the measured text, unchanged in
+	// method from the three raises before it.
+	const ceiling = 880
 	if got := EstimateTokens(GroundingPolicyCharacters()); got > ceiling {
 		t.Fatalf("the policy costs ~%d estimated tokens per turn, above the %d "+
 			"this design budgeted; shorten it or justify the raise", got, ceiling)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/corsi/backend/internal/chat/domain"
+	"github.com/corsi/backend/internal/chat/ports"
 )
 
 // Tool execution: the four gates a call passes before anything runs.
@@ -53,7 +54,16 @@ type toolOutcome struct {
 	// Result is the serialised success payload, or nil on failure. Kept
 	// apart from Content because the audit trail records what the tool
 	// returned, not what we phrased for the model.
-	Result     *string
+	Result *string
+	// EffectRef is the entity this call touched, as the CAPABILITY reported
+	// it — never as this file inferred it. Nil whenever the capability does
+	// not implement ports.EffectReporter, whenever it declines to name one,
+	// and whenever what it named does not satisfy the contract.
+	//
+	// It survives redaction on purpose: it is the one piece of a
+	// Confidential call that may outlive the payload, because it is a type
+	// and a UUID and cannot carry content.
+	EffectRef  *domain.EffectRef
 	DurationMS int
 }
 
@@ -171,12 +181,49 @@ func (s *Service) executeToolCall(
 
 	result := encoded
 	return toolOutcome{
-		Call:       call,
-		Content:    encoded,
-		Status:     domain.ToolCallOK,
-		Result:     &result,
+		Call:    call,
+		Content: encoded,
+		Status:  domain.ToolCallOK,
+		Result:  &result,
+		// Asked of the tool, with the output it just produced, before
+		// anything is redacted — and only on success, because a call that
+		// failed touched nothing to identify.
+		EffectRef:  s.effectRefOf(tool, call.Name, out),
 		DurationMS: duration,
 	}
+}
+
+// effectRefOf asks a capability which entity it just touched.
+//
+// ── Why this is a type assertion and not a field ───────────────────────
+// Because reporting an effect is opt-in. Most capabilities touch nothing
+// nameable — a listing, a read, a link between two things that already
+// exist — and the 47 that do not implement the interface answer nothing at
+// all, which is the correct answer and not a gap.
+//
+// ── Why the result is validated here ───────────────────────────────────
+// A capability under pressure to be helpful could return a title where an
+// id belongs. domain.EffectRef refuses that structurally, and this is where
+// the refusal takes effect: what fails the contract is DROPPED and logged,
+// never trimmed, corrected or passed along. A wrong identifier is worse
+// than none, because a resume would follow it confidently.
+func (s *Service) effectRefOf(tool ports.Tool, name domain.ToolName, out domain.ToolOutput) *domain.EffectRef {
+	reporter, ok := tool.(ports.EffectReporter)
+	if !ok {
+		return nil
+	}
+	ref, reported := reporter.EffectRefOf(out)
+	if !reported {
+		return nil
+	}
+	if !ref.Valid() {
+		// Loud, because this is a capability breaking its own contract and
+		// the symptom downstream would be a silently unsafe resume.
+		s.log.Warn("capability reported a malformed effect ref; dropping it",
+			"tool", name.String(), "type", ref.Type)
+		return nil
+	}
+	return &ref
 }
 
 // encodeToolOutput serialises a success, refusing one that is too large.
