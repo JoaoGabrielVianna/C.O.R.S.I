@@ -238,8 +238,8 @@ type moduleDetail struct {
 /* ── 1. the module list ──────────────────────────────────────────────── */
 
 // TestModulesAreListedInDisplayOrder covers requirement 1: the page can ask
-// what modules exist, and gets the three this installation actually
-// versions — not the five the settings screen invents.
+// what modules exist, and gets the ones this installation actually
+// versions — not the ones the settings screen invents.
 func TestModulesAreListedInDisplayOrder(t *testing.T) {
 	e := newEnv(t)
 
@@ -251,13 +251,15 @@ func TestModulesAreListedInDisplayOrder(t *testing.T) {
 	}
 	e.decode(rec, &got)
 
-	if len(got.Items) != 4 {
-		t.Fatalf("%d modules, want 4: %+v", len(got.Items), got.Items)
+	if len(got.Items) != 5 {
+		t.Fatalf("%d modules, want 5: %+v", len(got.Items), got.Items)
 	}
 	// Threads sits between Finance and Job Radar since Threads 1.0.0
-	// shipped: position 25, which puts the three real modules ahead of the
-	// backstage one without renumbering anything that was already there.
-	wantOrder := []string{"agents", "finance", "threads", "job-radar"}
+	// shipped, and Palace joined between Threads and Job Radar when Palace
+	// 0.0.1 shipped: positions 25 and 27. Each new module takes a gap
+	// rather than renumbering what was already there, which keeps the
+	// backstage module last without any existing row moving.
+	wantOrder := []string{"agents", "finance", "threads", "palace", "job-radar"}
 	for i, key := range wantOrder {
 		if got.Items[i].Key != key {
 			t.Errorf("module[%d] = %q, want %q", i, got.Items[i].Key, key)
@@ -277,11 +279,12 @@ func TestModulesAreListedInDisplayOrder(t *testing.T) {
 	// still refute it: TestModuleStatusIsNotDerivedFromItsReleases. What
 	// stays here is the factual list, which is what this test is named for.
 	//
-	// Threads is `active` despite having no screen of its own: the module
-	// status describes the module's lifecycle, not how much surface it has.
+	// Threads and Palace are `active` despite having no screen of their
+	// own: the module status describes the module's lifecycle, not how much
+	// surface it has.
 	wantStatus := map[string]string{
 		"agents": "active", "finance": "active",
-		"threads": "active", "job-radar": "active",
+		"threads": "active", "palace": "active", "job-radar": "active",
 	}
 	for _, m := range got.Items {
 		if want := wantStatus[m.Key]; m.Status != want {
