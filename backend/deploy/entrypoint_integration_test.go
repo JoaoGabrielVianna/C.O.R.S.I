@@ -306,6 +306,27 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		t.Errorf("relation %q missing", "meta_threads.connections")
 	}
 
+	// --- palace is present --------------------------------------------
+	// `palace.memories` and `palace.sources` are the OPERATOR's knowledge
+	// and the evidence behind it. They are not `chat.memories` and
+	// `chat.agent_sources`, which belong to an agent. Both pairs are
+	// asserted here so a migration that created the wrong one is a
+	// failure rather than a surprise later.
+	for _, rel := range []string{
+		"palace.rooms",
+		"palace.artifacts",
+		"palace.artifact_items",
+		"palace.sources",
+		"palace.memories",
+		"palace.memory_sources",
+		"palace.relations",
+		"palace.sessions",
+	} {
+		if !relationExists(t, conn, rel) {
+			t.Errorf("relation %q missing", rel)
+		}
+	}
+
 	// --- bookkeeping is independent -----------------------------------
 	// This is the assertion that pins the `-table` flag. Migrating chat
 	// without it would leave `schema_migrations_chat` absent and silently
@@ -326,6 +347,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		"public.schema_migrations_jobradar",
 		"public.schema_migrations_threads",
 		"public.schema_migrations_metathreads",
+		"public.schema_migrations_palace",
 	} {
 		if !relationExists(t, conn, table) {
 			t.Fatalf("version table `%s` missing — that module was migrated without -table", table)

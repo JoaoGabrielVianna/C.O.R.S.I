@@ -14,7 +14,7 @@ BACKUPS_DIR  ?= backups
 
 MODULE ?= finance
 
-.PHONY: help up down logs ps build run test test-integration test-integration-isolated tidy fmt vet lint migrate-up migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-down migrate-down-chat migrate-down-releases migrate-down-github migrate-down-jobradar migrate-version migrate-create openapi-gen swagger ci ci-fast backup restore
+.PHONY: help up down logs ps build run test test-integration test-integration-isolated tidy fmt vet lint migrate-up migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-palace migrate-down migrate-down-chat migrate-down-releases migrate-down-github migrate-down-jobradar migrate-down-palace migrate-version migrate-create openapi-gen swagger ci ci-fast backup restore
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -82,8 +82,9 @@ GITHUB_MIGRATE_TABLE := schema_migrations_github
 JOBRADAR_MIGRATE_TABLE := schema_migrations_jobradar
 THREADS_MIGRATE_TABLE := schema_migrations_threads
 METATHREADS_MIGRATE_TABLE := schema_migrations_metathreads
+PALACE_MIGRATE_TABLE := schema_migrations_palace
 
-migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads ## apply pending migrations (all modules)
+migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads migrate-up-palace ## apply pending migrations (all modules)
 
 migrate-up-finance: ## apply pending finance migrations
 	$(MIGRATE) -dir migrations/finance up
@@ -109,6 +110,12 @@ migrate-up-threads: ## apply pending threads migrations
 migrate-up-metathreads: ## apply pending meta threads integration migrations
 	$(MIGRATE) -dir migrations/metathreads -table $(METATHREADS_MIGRATE_TABLE) up
 
+# Palace, the operator's persistent memory. Its `memories` and `sources`
+# are NOT chat.memories and chat.agent_sources. See the header of
+# migrations/palace/0001_init.up.sql.
+migrate-up-palace: ## apply pending palace migrations
+	$(MIGRATE) -dir migrations/palace -table $(PALACE_MIGRATE_TABLE) up
+
 migrate-down: ## revert one finance migration
 	$(MIGRATE) -dir migrations/finance -step 1 down
 
@@ -130,6 +137,9 @@ migrate-down-threads: ## revert one threads migration
 migrate-down-metathreads: ## revert one meta threads integration migration
 	$(MIGRATE) -dir migrations/metathreads -table $(METATHREADS_MIGRATE_TABLE) -step 1 down
 
+migrate-down-palace: ## revert one palace migration
+	$(MIGRATE) -dir migrations/palace -table $(PALACE_MIGRATE_TABLE) -step 1 down
+
 migrate-version: ## show migration version for every module
 	@printf "finance  "; $(MIGRATE) -dir migrations/finance version
 	@printf "chat     "; $(MIGRATE) -dir migrations/chat -table $(CHAT_MIGRATE_TABLE) version
@@ -138,9 +148,10 @@ migrate-version: ## show migration version for every module
 	@printf "jobradar "; $(MIGRATE) -dir migrations/jobradar -table $(JOBRADAR_MIGRATE_TABLE) version
 	@printf "threads  "; $(MIGRATE) -dir migrations/threads -table $(THREADS_MIGRATE_TABLE) version
 	@printf "metathreads "; $(MIGRATE) -dir migrations/metathreads -table $(METATHREADS_MIGRATE_TABLE) version
+	@printf "palace   "; $(MIGRATE) -dir migrations/palace -table $(PALACE_MIGRATE_TABLE) version
 
 migrate-create: ## create migration: make migrate-create name=add_x [MODULE=chat]
-	@test -n "$(name)" || (echo "usage: make migrate-create name=<name> [MODULE=finance|chat|releases|github|jobradar|threads|metathreads]"; exit 1)
+	@test -n "$(name)" || (echo "usage: make migrate-create name=<name> [MODULE=finance|chat|releases|github|jobradar|threads|metathreads|palace]"; exit 1)
 	@ts=$$(date -u +%Y%m%d%H%M%S); \
 	  touch migrations/$(MODULE)/$${ts}_$(name).up.sql; \
 	  touch migrations/$(MODULE)/$${ts}_$(name).down.sql; \

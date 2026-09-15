@@ -56,6 +56,12 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
   # The Meta Threads INTEGRATION, which is not the Threads module above.
   "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/metathreads" -table schema_migrations_metathreads up \
     || { echo "entrypoint: meta threads migrations failed" >&2; exit 1; }
+
+  # Palace, the operator's persistent memory. Its `memories` and `sources`
+  # are NOT chat.memories and chat.agent_sources, which are the agent's.
+  # See the header of migrations/palace/0001_init.up.sql.
+  "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/palace" -table schema_migrations_palace up \
+    || { echo "entrypoint: palace migrations failed" >&2; exit 1; }
 fi
 
 echo "entrypoint: starting corsi on ${HTTP_ADDR}"

@@ -21,6 +21,7 @@ import (
 	"github.com/corsi/backend/internal/integrations/metathreads"
 	metathreadsapp "github.com/corsi/backend/internal/integrations/metathreads/app"
 	"github.com/corsi/backend/internal/jobradar"
+	"github.com/corsi/backend/internal/palace"
 	"github.com/corsi/backend/internal/platform/config"
 	"github.com/corsi/backend/internal/platform/health"
 	"github.com/corsi/backend/internal/platform/httpserver"
@@ -227,6 +228,33 @@ func run() error {
 		Logger: log,
 	})
 
+	// Palace. A MODULE, like Threads and Job Radar: it owns its own
+	// entities and its own schema, and it talks to no external system.
+	//
+	// Wired with NO Register call, and that is a decision rather than an
+	// omission: Palace ships no screen in this sprint, so it has no HTTP
+	// routes, and a route with no caller is a surface nobody is testing.
+	// Its entire interface is a conversation with an agent that holds the
+	// grants, which reaches the same application service, through the
+	// same seam, as any route would.
+	//
+	// ── The name collision this file is the only place to see ───────
+	// Palace has `memories` and `sources`, and so does Chat. They are
+	// unrelated:
+	//
+	//	chat.memories        the AGENT's memory, injected by budget,
+	//	                     scoped to one agent. How it behaves.
+	//	palace.memories      the OPERATOR's knowledge, read on demand,
+	//	                     scoped to the workspace. What they know.
+	//
+	// Neither package imports the other, and no code bridges them. An
+	// agent granted the palace.* capabilities is what makes the second
+	// reachable, and that agent is the only place they meet.
+	palaceMod := palace.New(palace.Deps{
+		Pool:   pool,
+		Logger: log,
+	})
+
 	// The catalogue is the concatenation of what every capability owner
 	// offers. Order is irrelevant — the registry sorts by name — and a
 	// duplicate name across two owners refuses the whole registry at
@@ -240,6 +268,12 @@ func run() error {
 	// does not import Finance, and the tools reach the same application
 	// service the HTTP handlers do.
 	agentTools = append(agentTools, financeMod.Tools()...)
+	// Palace. Twenty-three capabilities, every one of them Confidential
+	// and none of them External: they read and write the operator's own
+	// record, in our own database. A Palace read can therefore never make
+	// a turn VERIFIED_EXTERNAL_READ, which is exactly what that receipt
+	// is for.
+	agentTools = append(agentTools, palaceMod.Tools()...)
 
 	// The other half of the same arrangement: who can say what an entity is
 	// CALLED, so a conversation can be about it. Two providers now — Job
