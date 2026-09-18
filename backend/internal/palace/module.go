@@ -33,23 +33,64 @@
 // `palace.sources`. See domain/palace.go, which states the boundary in
 // full.
 //
-// ── Why there are no HTTP routes ───────────────────────────────────────
-// Because this sprint ships no Palace screen, and a route with no caller
-// is a surface nobody is testing. The interface to Palace today is a
-// conversation with an authorized agent, which reaches the same
-// application service through the same tools. That is a DECISION and not
-// a gap: the module is complete without it, and adding routes the day a
-// screen exists is a Register method and a handler, with the domain, the
+// ── The two surfaces, and what each one is for ─────────────────────────
+//
+//	tools     THE CONVERSATIONAL SURFACE. Twenty-four capabilities an
+//	          agent can be granted one at a time, and the only way
+//	          anything in this context is WRITTEN. Every grant is a row
+//	          the operator can see and revoke.
+//
+//	httpapi   THE OPERATOR'S OWN PROJECTIONS. Read only, no exceptions:
+//	          screens that show the operator their own record. It creates
+//	          nothing, changes nothing and deletes nothing.
+//
+// Until this slice the second one did not exist, and its absence was a
+// recorded decision rather than a gap: a route with no caller is a surface
+// nobody is testing. It exists now because a caller does, and it cost what
+// was predicted — a Register method and a handler, with the domain, the
 // schema and the application layer already in place and already proven.
-// Threads made the same call for the same reason.
+//
+// Both reach the SAME application service. There is no second set of rules
+// about what may be read, and no SQL anywhere but in the repositories.
+//
+// ── Why the HTTP surface withholds MORE than the tools do ──────────────
+// A capability answering "onde foi que eu guardei aquilo" is a targeted
+// question from the operator. A projection is a broad, ambient rendering
+// of a whole area, and it is the surface most likely to be on a screen
+// somebody else can see. So it is stricter in two ways the tools are not:
+// highly sensitive content is never returned and cannot be asked for, and
+// something filed in a withheld room is withheld with it. See
+// app/surface.go. None of that changes what a tool sees.
+//
+// ── Tool audit and UI access are DIFFERENT observability models ────────
+// A `palace.*` capability is Confidential, so `chat.tool_calls` records
+// the capability, the round, the outcome, the duration and the error code,
+// and never the arguments or the result. That is an audit trail of what an
+// AGENT did, and the redaction is what makes it safe to keep.
+//
+// A read through this adapter does not travel that trail and is not meant
+// to. It is the operator reading their own database through their own
+// screen, and it is covered by the platform's HTTP metrics and logs like
+// every other route in this product.
+//
+// This slice introduces NO Palace-specific access audit, and the absence
+// is a decision rather than an oversight. Recording every screen read of a
+// personal knowledge base would build a second, unredacted record of what
+// the operator looked at and when, inside the one context whose entire
+// design is about withholding content from records. If that is ever
+// wanted, it is its own decision with its own questions about retention.
+// Nothing here changes the behaviour of the existing audit.
 package palace
 
 import (
 	"log/slog"
+	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/corsi/backend/internal/chat/ports"
+	"github.com/corsi/backend/internal/palace/adapters/httpapi"
 	"github.com/corsi/backend/internal/palace/adapters/repo"
 	"github.com/corsi/backend/internal/palace/app"
 	"github.com/corsi/backend/internal/palace/tools"
@@ -58,11 +99,22 @@ import (
 type Deps struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+	// WorkspaceMiddleware guards the read routes. Supplied by the
+	// composition root rather than built here, because every bounded
+	// context must enforce the SAME workspace rules with the SAME
+	// counters: a module that constructed its own would be a second
+	// opinion about what an absent header means.
+	//
+	// Required only by Register. A module wired without it still serves
+	// its capabilities, which is what a deployment that mounts no routes
+	// would want.
+	WorkspaceMiddleware func(http.Handler) http.Handler
 }
 
 type Module struct {
-	deps Deps
-	svc  *app.Service
+	deps    Deps
+	svc     *app.Service
+	handler *httpapi.Handler
 }
 
 // New builds the module.
@@ -88,7 +140,27 @@ func New(deps Deps) *Module {
 		Clock:      repos.Clock,
 		Logger:     deps.Logger,
 	})
-	return &Module{deps: deps, svc: svc}
+	return &Module{deps: deps, svc: svc, handler: httpapi.NewHandler(svc, deps.Logger)}
+}
+
+// Register mounts the Palace read routes under /palace, guarded by the
+// workspace middleware supplied via Deps.
+//
+// ── Why a missing middleware stops the boot ────────────────────────────
+// Because chi accepts a nil middleware without complaint and dereferences
+// it on the first request, which turns a wiring mistake into a 500 in
+// production, far from the line that caused it. Worse, the failure mode of
+// a workspace guard that is not there is not an error at all: it is a
+// handler serving a request nobody scoped. Refusing at composition is the
+// same reasoning MustNewService already applies to a missing repository.
+func (m *Module) Register(r chi.Router) {
+	if m.deps.WorkspaceMiddleware == nil {
+		panic("palace: WorkspaceMiddleware is required to mount the read routes")
+	}
+	r.Route("/palace", func(r chi.Router) {
+		r.Use(m.deps.WorkspaceMiddleware)
+		m.handler.Mount(r)
+	})
 }
 
 // Tools exposes this module's capabilities to whoever composes the

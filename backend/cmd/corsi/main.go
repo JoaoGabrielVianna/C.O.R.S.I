@@ -231,12 +231,11 @@ func run() error {
 	// Palace. A MODULE, like Threads and Job Radar: it owns its own
 	// entities and its own schema, and it talks to no external system.
 	//
-	// Wired with NO Register call, and that is a decision rather than an
-	// omission: Palace ships no screen in this sprint, so it has no HTTP
-	// routes, and a route with no caller is a surface nobody is testing.
-	// Its entire interface is a conversation with an agent that holds the
-	// grants, which reaches the same application service, through the
-	// same seam, as any route would.
+	// It is wired with BOTH of its surfaces: the capabilities below, and
+	// the read-only routes registered a few lines down. The text that used
+	// to sit here said the opposite — that Palace had no screen and
+	// therefore no Register call — and it was already false when the
+	// routes landed, three lines above the call that contradicts it.
 	//
 	// ── The name collision this file is the only place to see ───────
 	// Palace has `memories` and `sources`, and so does Chat. They are
@@ -251,9 +250,17 @@ func run() error {
 	// agent granted the palace.* capabilities is what makes the second
 	// reachable, and that agent is the only place they meet.
 	palaceMod := palace.New(palace.Deps{
-		Pool:   pool,
-		Logger: log,
+		Pool:                pool,
+		Logger:              log,
+		WorkspaceMiddleware: wsMiddleware,
 	})
+	// Palace has TWO surfaces, and they are not equivalent. The
+	// capabilities below are how anything is written, by an agent the
+	// operator granted one at a time. These routes are read only: screens
+	// that show the operator their own record, withholding strictly more
+	// than a capability does. Neither knows about the other, and both reach
+	// the same application service.
+	palaceMod.Register(router)
 
 	// The catalogue is the concatenation of what every capability owner
 	// offers. Order is irrelevant — the registry sorts by name — and a
