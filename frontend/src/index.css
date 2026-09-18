@@ -75,6 +75,14 @@
   --color-info: #1E6FD9;
   --color-destructive: #D83A3A;
 
+  /* Palace scene surfaces. Aliases, not new colours: the diorama's light
+     and dark values are tuned here so adjusting the room never means
+     touching a component. */
+  --palace-scene-floor: #EEEFF1;
+  --palace-scene-wall: #FFFFFF;
+  --palace-scene-object: #FFFFFF;
+  --palace-scene-object-side: #DEDFE3;
+
   /* ── Radii (ERP-exact) ────────────────────────────────────────────────── */
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
@@ -130,6 +138,10 @@
   --color-accent: #E8742A;
   --color-accent-foreground: #0F1012;
   --color-border: #26282E;
+  --palace-scene-floor: #1F2126;
+  --palace-scene-wall: #18191D;
+  --palace-scene-object: #26282E;
+  --palace-scene-object-side: #1A1C20;
   --color-border-strong: #3A3D44;
   --color-input: #26282E;
   --color-ring: #FF7C3D;
