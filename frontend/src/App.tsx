@@ -1,4 +1,3 @@
-import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { LandingPage } from "@/pages/Landing";
 import { LoginPage } from "@/pages/Login";
@@ -14,29 +13,56 @@ import { PreferencesSettingsPage } from "@/pages/app/settings/Preferences";
 import { ModulesSettingsPage } from "@/pages/app/settings/Modules";
 import { IntegrationsSettingsPage } from "@/pages/app/settings/Integrations";
 import { DEFAULT_APP_ROUTE } from "@/lib/navVisibility";
+import {
+  AgentsPage,
+  FinancePage,
+  JobRadarPage,
+  PalacePage,
+  PersonDetailPage,
+  ReleasesPage,
+} from "@/lib/lazyRoutes";
 
 /**
  * Heavy module pages are loaded on demand so they don't sit in the main
  * bundle. When a user navigates to /app/modules/job-radar (or finance), Vite
  * fetches the matching chunk; subsequent visits are cached.
+ *
+ * The `lazy()` calls moved to `lib/lazyRoutes`, unchanged, so that the
+ * sidebar's hover-preload and the route below can name the SAME `import()`.
+ * Two copies of a specifier drift silently: everything keeps working while
+ * the hover warms a chunk the click does not use.
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ *   NO ROUTE DECLARES ITS OWN SUSPENSE BOUNDARY. THERE IS EXACTLY ONE,
+ *   IN `WorkspaceLayout`, AROUND THE `<Outlet />`
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Every lazy route below used to be wrapped in its own
+ * `<Suspense fallback={<RouteFallback />}>`. Six sibling boundaries, and
+ * the position of the boundary in the element tree changed with the route:
+ * `settings/profile` sits one level deeper than `modules/finance`, and
+ * `releases/*` is a splat where `finance` is static. When the position
+ * changes, React does not reconcile the old boundary with the new one — it
+ * MOUNTS a new one, and a boundary that mounts already suspended has no
+ * previous content to keep, so it draws the fallback and then holds it for
+ * React's reveal throttle.
+ *
+ * Measured in Chrome on the production build, with network latency emulated
+ * at ZERO and the chunk served in 1 to 3ms: 17 frames, 277 to 284ms, of the
+ * route area replaced by a loading bar. Not network — a floor. That is what
+ * reads as "the app reloaded" when you switch modules.
+ *
+ * One boundary above the `<Outlet />` is stable across every navigation, so
+ * it is reconciled rather than remounted. React Router runs navigation in
+ * `startTransition`, and a transition that suspends against an ALREADY
+ * MOUNTED boundary keeps the previous content on screen until the new one
+ * is ready. Nothing disappears.
+ *
+ * Adding a `<Suspense>` back here, per route or per group, reintroduces the
+ * defect. `App.suspense.test.tsx` fails if this file mentions one.
  */
-const JobRadarPage = lazy(() =>
-  import("@/pages/app/modules/job-radar").then((m) => ({ default: m.JobRadarPage })),
-);
-const FinancePage = lazy(() =>
-  import("@/pages/app/modules/finance").then((m) => ({ default: m.FinancePage })),
-);
-const PersonDetailPage = lazy(() =>
-  import("@/pages/app/PersonDetail").then((m) => ({ default: m.PersonDetailPage })),
-);
-const AgentsPage = lazy(() =>
-  import("@/pages/app/modules/agents").then((m) => ({ default: m.AgentsPage })),
-);
-// Release history owns its own nested routes, so one lazy chunk covers the
-// overview, the per-module timeline and a single release.
-const ReleasesPage = lazy(() =>
-  import("@/pages/app/releases").then((m) => ({ default: m.ReleasesPage })),
-);
 
 /**
  * App — router shell.
@@ -78,35 +104,15 @@ function App() {
             <Route path="dashboard" element={<DashboardPage />} />
 
             <Route path="modules">
-              <Route
-                path="job-radar"
-                element={
-                  <Suspense fallback={<RouteFallback />}>
-                    <JobRadarPage />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="finance"
-                element={
-                  <Suspense fallback={<RouteFallback />}>
-                    <FinancePage />
-                  </Suspense>
-                }
-              />
+              <Route path="job-radar" element={<JobRadarPage />} />
+              <Route path="finance"   element={<FinancePage />} />
               {/* Agents declares its own routes below this point: the
                   module has an internal hierarchy (agent → conversations →
                   one conversation, plus its settings and capability
                   surfaces) and that shape belongs with the module, not in
                   the app shell. One lazy chunk still covers all of it. */}
-              <Route
-                path="agents/*"
-                element={
-                  <Suspense fallback={<RouteFallback />}>
-                    <AgentsPage />
-                  </Suspense>
-                }
-              />
+              <Route path="agents/*"  element={<AgentsPage />} />
+              <Route path="palace/*"  element={<PalacePage />} />
               <Route path="news"      element={<IntelligencePage />} />
               <Route path="content"   element={<ContentPage />} />
             </Route>
@@ -127,14 +133,7 @@ function App() {
               <Route path="*" element={<Navigate to="/app/settings/profile" replace />} />
             </Route>
 
-            <Route
-              path="releases/*"
-              element={
-                <Suspense fallback={<RouteFallback />}>
-                  <ReleasesPage />
-                </Suspense>
-              }
-            />
+            <Route path="releases/*" element={<ReleasesPage />} />
 
             {/* `/app/account` was a second identity page: name, email,
                 roles and provider under the title "Account", beside a
@@ -142,30 +141,13 @@ function App() {
                 the address still resolves so an old link or a ⌘K history
                 entry does not dead-end. */}
             <Route path="account" element={<Navigate to="/app/settings/profile" replace />} />
-            <Route
-              path="people/:id"
-              element={
-                <Suspense fallback={<RouteFallback />}>
-                  <PersonDetailPage />
-                </Suspense>
-              }
-            />
+            <Route path="people/:id" element={<PersonDetailPage />} />
           </Route>
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
-  );
-}
-
-function RouteFallback() {
-  return (
-    <div className="flex h-full min-h-[200px] items-center justify-center">
-      <div className="h-1 w-32 overflow-hidden rounded-full bg-(--color-muted)">
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-(--color-brand-500)" />
-      </div>
-    </div>
   );
 }
 

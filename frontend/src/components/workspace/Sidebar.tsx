@@ -8,6 +8,7 @@ import {
   ChevronsRight,
   ChevronsUpDown,
   History,
+  Landmark,
   LayoutDashboard,
   Radar,
   Sparkles,
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { LogoMark, Wordmark } from "@/components/ui/Logo";
 import { useT } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
+import { preloadRoute } from "@/lib/lazyRoutes";
 import { isRouteHidden } from "@/lib/navVisibility";
 import { useWorkspace } from "@/lib/workspace";
 import { AccountMenuPanel } from "./AccountMenu";
@@ -162,6 +164,7 @@ function Sections({
     { to: "/app/modules/job-radar", label: t.app.sidebar.items.jobRadar, icon: Radar },
     { to: "/app/modules/finance",   label: t.app.sidebar.items.finance,  icon: Wallet },
     { to: "/app/modules/agents",    label: t.app.sidebar.items.agents,   icon: Bot },
+    { to: "/app/modules/palace",    label: t.app.sidebar.items.palace,   icon: Landmark },
     { to: "/app/modules/news",      label: t.app.sidebar.items.intelligence, icon: BarChart3, upcoming: true },
     { to: "/app/modules/content",   label: t.app.sidebar.items.content,  icon: Sparkles, upcoming: true },
   ];
@@ -235,6 +238,21 @@ function NavRow({
     <NavLink
       to={item.to}
       onClick={onNavigate}
+      // ── Warming the code, and only the code ──────────────────────────
+      // A click used to start the chunk download; the component then
+      // mounted and only then asked for data, so two round trips ran in
+      // series. Pointing at a rail item is a good enough guess of intent to
+      // spend the first one early.
+      //
+      // `onFocus` is not decoration: a keyboard reader tabbing down the
+      // rail expresses exactly the same intent, and a preload that only
+      // listened to the mouse would quietly make their navigation the slow
+      // one. `preloadRoute` is idempotent, so both firing costs nothing.
+      //
+      // It downloads a module. It does not mount it, does not read the
+      // operator's data, and does not touch the URL — see `lib/lazyRoutes`.
+      onPointerEnter={() => preloadRoute(item.to)}
+      onFocus={() => preloadRoute(item.to)}
       // Icon-only must still say what it is. `title` draws the tooltip;
       // `aria-label` is what actually names the link, rather than leaning
       // on the browser's `title` fallback in the accessibility tree.
