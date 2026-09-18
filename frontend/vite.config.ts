@@ -33,6 +33,10 @@ const API_PREFIXES = [
   // Added after the drift above. The tool namespace is `job_radar`; the
   // URL uses a hyphen, like every other route in the product.
   '/job-radar',
+  // The Palace read surface. Missing it reproduced the same failure a
+  // third time: the Library rendered "não foi possível carregar" while
+  // the backend served the routes correctly.
+  '/palace',
   '/health',
   '/metrics',
   '/openapi.yaml',
