@@ -115,6 +115,100 @@ type Sensitive struct {
 	IncludeHighlySensitive bool
 }
 
+// Visibility is the set of rules a READING SURFACE imposes on top of the
+// workspace predicate.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	A SURFACE MAY WITHHOLD MORE THAN THE CORE. IT MAY NEVER SHOW MORE
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// The Core answers "does this workspace have this row". A surface answers
+// "may this projection show it", and those are different questions the
+// moment a projection is spatial: an object drawn inside a room the
+// viewer cannot see would announce that room by existing.
+//
+// ── The two rules, and why they are separate fields ────────────────────
+//
+//	IncludeHighlySensitive  which LEVELS may appear. Same meaning as
+//	                        Sensitive, carried here so one value can be
+//	                        passed to a read that takes no filter.
+//
+//	InheritRoomVisibility   whether a withheld ROOM withholds its
+//	                        CONTENTS, regardless of what the contents
+//	                        say about themselves.
+//
+// ── Visual containment inherits visibility, not sensitivity ────────────
+// An artifact filed in a highly sensitive room is not itself sensitive,
+// and this does NOT relabel it: `Artifact.sensitivity` is untouched, and
+// moving the same row to a visible room makes it appear again without any
+// edit. What the flag decides is whether a SURFACE may render something
+// whose container it is already withholding.
+//
+// ── What the zero value actually is, stated honestly ───────────────────
+// The two fields do NOT default the same way, and pretending otherwise
+// would be worse than the asymmetry:
+//
+//	Visibility{}.IncludeHighlySensitive  false, which WITHHOLDS. A caller
+//	                                     that says nothing gets the safe
+//	                                     answer.
+//
+//	Visibility{}.InheritRoomVisibility   false, which does NOT withhold.
+//	                                     A caller that says nothing gets
+//	                                     the Core's behaviour.
+//
+// The second one is an opt-in rather than an opt-out on purpose, and the
+// reason is that the Core must keep behaving exactly as it did: the
+// capabilities read through the same application service, and a flag that
+// defaulted to true would silently change what an authorized agent can
+// reach. So `Visibility{}` is the CORE's posture, not the surface's.
+//
+// The cost is real and worth naming: a surface added later that forgets
+// this field is more permissive than the Palace is, though never more
+// permissive than the Core. A default cannot protect against that, so a
+// test does. See the read surface, where the value is built by one
+// function that both fields are stated in, and where a test asserts the
+// literal contents of that function rather than a behaviour.
+//
+// ── Why this is not folded into Sensitive ──────────────────────────────
+// `Sensitive` is embedded in RoomFilter too, where containment means
+// nothing: a room is not inside a room. A field that is meaningless on one
+// of its carriers is a field somebody eventually sets there by accident.
+type Visibility struct {
+	IncludeHighlySensitive bool
+	InheritRoomVisibility  bool
+}
+
+// RoomCount is how many rows a grouped read found for one room.
+//
+// ── Why RoomID is a pointer ────────────────────────────────────────────
+// Because `NULL` is a real group and it is the one the unfiled bucket is
+// built from. A zero uuid would be a fourth spelling of nothing, sitting
+// next to nil and next to a room that genuinely has that id, and the
+// first caller to compare it against `uuid.Nil` would be right by
+// accident.
+//
+// ── What a grouped read owes ───────────────────────────────────────────
+// The SAME predicate as the listing it summarises. A count computed under
+// a laxer rule is a leak even though it returns no text: a room card
+// reading "7 objetos" over a listing that can only ever show 6 has
+// published the existence of the seventh.
+type RoomCount struct {
+	RoomID *uuid.UUID
+	Count  int64
+}
+
+// ItemTally is how many entries an artifact has, and how many are done.
+//
+// Both numbers together rather than two reads, because "3 de 7" is one
+// fact and splitting it across two queries is how they end up disagreeing
+// under concurrent writes.
+type ItemTally struct {
+	Total int64
+	Done  int64
+}
+
 /* ── rooms ───────────────────────────────────────────────────────────── */
 
 // RoomFilter narrows a listing of rooms.
@@ -215,9 +309,31 @@ type MemoryFilter struct {
 	// in recency order, which is what a person means by "o que eu
 	// guardei", and the floor is how they narrow it.
 	MinImportance int
+	// ArtifactID narrows to what a memory is ABOUT. Nil means every
+	// memory, including the ones attached to no artifact.
+	ArtifactID *uuid.UUID
+	// Unfiled narrows to the memories filed in no room. See
+	// ArtifactFilter.Unfiled, which is the same idea about the same
+	// column.
+	Unfiled bool
 	// Search matches the content or the summary, case-insensitively and
 	// by substring.
 	Search string
+
+	// InheritRoomVisibility applies D1 AND its transitive form D1.1: a
+	// memory is withheld when its room is withheld, and ALSO when the
+	// artifact it is about is withheld, including because THAT artifact's
+	// room is.
+	//
+	// ── Why the transitive hop is not optional ─────────────────────────
+	// A memory can be filed in a visible room while being about an
+	// artifact that lives in a withheld one, because `room_id` and
+	// `artifact_id` are independent references. Its summary describes the
+	// withheld thing, so publishing it is the same disclosure with a
+	// different author. One flag turns on the whole rule rather than two,
+	// because a surface that wanted one hop and not the other would be a
+	// surface with a hole in it.
+	InheritRoomVisibility bool
 
 	Sensitive
 	Page
@@ -228,6 +344,23 @@ type MemoryRepo interface {
 	// Count applies the same sensitivity rule as List, for the reason
 	// RoomRepo.Count gives.
 	Count(ctx context.Context, workspaceID uuid.UUID, f MemoryFilter) (int64, error)
+	// CountByRoom is Count, grouped. One statement for a whole map, so a
+	// caller summarising every room does not issue one read per room.
+	//
+	// RoomID and Unfiled in the filter are IGNORED: grouping by a column
+	// while also filtering on it would answer a question nobody asked.
+	// Everything else in the filter applies, INCLUDING the visibility
+	// rules, which is the entire reason this is a repository method and
+	// not a loop over Count.
+	//
+	// Rooms with no matching rows are absent rather than zero: a caller
+	// that wants zero for a room it knows about reads a missing key as
+	// zero, and a repository that invented rows would be inventing rooms.
+	CountByRoom(ctx context.Context, workspaceID uuid.UUID, f MemoryFilter) ([]RoomCount, error)
+	// ListByIDs resolves a known set of ids under a surface's rules,
+	// applying the transitive containment rule as well. See
+	// ArtifactRepo.ListByIDs, which states the contract this shares.
+	ListByIDs(ctx context.Context, workspaceID uuid.UUID, ids []uuid.UUID, v Visibility) ([]*domain.Memory, error)
 	FindByID(ctx context.Context, workspaceID, id uuid.UUID) (*domain.Memory, error)
 	// StatusOf answers whether this memory is active or archived, without
 	// reading it. See RoomRepo.StatusOf.
@@ -257,9 +390,38 @@ type ArtifactFilter struct {
 	// RoomID narrows to what was filed in one room. Nil means everywhere,
 	// including the artifacts that were never filed.
 	RoomID *uuid.UUID
+	// Unfiled narrows to the artifacts that were filed NOWHERE.
+	//
+	// ── Why a flag and not a sentinel inside RoomID ────────────────────
+	// Because `room_id = NULL` is never what a caller means by a pointer:
+	// a nil RoomID already means "every room", and overloading it to also
+	// mean "no room" would make the two indistinguishable. The same shape
+	// Job Radar uses for `stage=discover`, which is the same question
+	// asked about a different column.
+	//
+	// Ignored when RoomID is set: asking for one room and for no room at
+	// once is a contradiction, and the narrower of the two wins rather
+	// than producing an empty result nobody can explain.
+	Unfiled bool
 	// Search matches the title or the body, case-insensitively and by
 	// substring.
 	Search string
+
+	// InheritRoomVisibility applies D1: an artifact filed in a room this
+	// read may not show is withheld with it, whatever its own level says.
+	//
+	// ── Why this is a filter field and not a property of the repository ─
+	// Because it is a SURFACE rule and the repository serves more than one
+	// surface. A capability reading the operator's own record on their
+	// explicit request is not a broad ambient projection, and the two are
+	// allowed to differ. What is NOT allowed is for the difference to be
+	// implicit, so it is a field somebody has to set.
+	//
+	// ── Why false is the zero value, when false is the laxer answer ─────
+	// Because the Core's behaviour must not change under anyone who
+	// already depends on it. See the note on Visibility, which states the
+	// asymmetry and what covers it.
+	InheritRoomVisibility bool
 
 	Sensitive
 	Page
@@ -268,6 +430,37 @@ type ArtifactFilter struct {
 type ArtifactRepo interface {
 	List(ctx context.Context, workspaceID uuid.UUID, f ArtifactFilter) ([]*domain.Artifact, error)
 	Count(ctx context.Context, workspaceID uuid.UUID, f ArtifactFilter) (int64, error)
+	// CountByRoom is Count, grouped by room. See MemoryRepo.CountByRoom,
+	// which states the contract this shares.
+	CountByRoom(ctx context.Context, workspaceID uuid.UUID, f ArtifactFilter) ([]RoomCount, error)
+	// ListByIDs resolves a known set of ids under a surface's rules.
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	//	AN INELIGIBLE ROW IS NOT RETURNED. IT IS NOT LOADED
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	// This exists for callers holding ids they did not choose: the two
+	// endpoints of a relation are whatever somebody once linked, and a
+	// relation carries no foreign key, so the ids arrive unvetted. The
+	// tempting shape is one FindByID per id followed by a check, and it is
+	// wrong in two ways: it is a read per edge, and it pulls the withheld
+	// row's content into memory, into a trace, into whatever logs a slow
+	// query. Here the predicate is the SAME one the listings use, so a row
+	// the surface may not show is never selected.
+	//
+	// ── What it does NOT filter ────────────────────────────────────────
+	// Lifecycle. Archived rows come back, because a neighbour that was
+	// retired is still part of the history the caller is asking about, and
+	// the caller is told the status rather than lied to by omission.
+	//
+	// ── Bounds ─────────────────────────────────────────────────────────
+	// The id set IS the bound: there is no LIMIT, and the caller is
+	// responsible for not handing over an unbounded slice. Rows absent
+	// from the result are absent, and the caller learns nothing about why.
+	// An empty input is not a query.
+	ListByIDs(ctx context.Context, workspaceID uuid.UUID, ids []uuid.UUID, v Visibility) ([]*domain.Artifact, error)
 	FindByID(ctx context.Context, workspaceID, id uuid.UUID) (*domain.Artifact, error)
 	// Exists answers whether this workspace has this artifact, without
 	// reading it. Used to resolve a REFERENCE, where the caller wants one
@@ -321,6 +514,24 @@ type ItemRepo interface {
 	// order, ties broken by id.
 	ListByArtifact(ctx context.Context, workspaceID, artifactID uuid.UUID, p Page) ([]*domain.ArtifactItem, error)
 	CountByArtifact(ctx context.Context, workspaceID, artifactID uuid.UUID) (int64, error)
+	// CountByArtifacts tallies a whole page of artifacts in one statement.
+	//
+	// ── Why this exists at all ─────────────────────────────────────────
+	// Because a listing that shows "3 de 7" beside each row would
+	// otherwise issue one read per row, and a page of twenty-five becomes
+	// twenty-six round trips that each do almost nothing. The shape of the
+	// question is per-page, so the read is per-page.
+	//
+	// ── Why no visibility rule here ────────────────────────────────────
+	// An entry carries no sensitivity of its own: it inherits everything
+	// from the artifact that holds it, and this method is only ever called
+	// with ids of artifacts the caller has ALREADY resolved through
+	// whatever rule it answers to. Adding a second, independent rule here
+	// would be a second opinion about the same question.
+	//
+	// Artifacts with no live entries are absent from the map rather than
+	// present with a zero.
+	CountByArtifacts(ctx context.Context, workspaceID uuid.UUID, artifactIDs []uuid.UUID) (map[uuid.UUID]ItemTally, error)
 	FindByID(ctx context.Context, workspaceID, artifactID, itemID uuid.UUID) (*domain.ArtifactItem, error)
 	// Create writes a new entry.
 	//

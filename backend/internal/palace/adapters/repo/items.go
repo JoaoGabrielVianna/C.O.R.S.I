@@ -77,6 +77,56 @@ func (r *ItemRepo) ListByArtifact(ctx context.Context, workspaceID, artifactID u
 	return out, nil
 }
 
+// CountByArtifacts tallies a whole page of artifacts in one statement.
+//
+// ── Why `count(*) FILTER (WHERE done)` and not two queries ─────────────
+// Because "3 de 7" is ONE fact. Two statements would read the table
+// twice, and under a concurrent write they could disagree, producing a
+// checklist that claims more entries are done than exist.
+//
+// ── Why an empty input is not a query ──────────────────────────────────
+// A page with no rows asks nothing. Sending `= ANY('{}')` would be a
+// round trip guaranteed to return nothing.
+//
+// ── What is NOT here ───────────────────────────────────────────────────
+// Any visibility rule. An entry carries no sensitivity of its own and
+// inherits everything from the artifact holding it, and the caller has
+// already resolved those artifacts through whatever rule it answers to.
+// A second, independent opinion here would be a second place to get the
+// same question wrong.
+func (r *ItemRepo) CountByArtifacts(ctx context.Context, workspaceID uuid.UUID, artifactIDs []uuid.UUID) (map[uuid.UUID]ports.ItemTally, error) {
+	out := make(map[uuid.UUID]ports.ItemTally, len(artifactIDs))
+	if len(artifactIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := postgres.Conn(ctx, r.pool).Query(ctx, `
+		SELECT artifact_id, count(*), count(*) FILTER (WHERE done)
+		FROM palace.artifact_items
+		WHERE workspace_id = $1 AND artifact_id = ANY($2) AND deleted_at IS NULL
+		GROUP BY artifact_id`,
+		workspaceID, artifactIDs)
+	if err != nil {
+		return nil, safeDBError("tally artifact items", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id    uuid.UUID
+			tally ports.ItemTally
+		)
+		if err := rows.Scan(&id, &tally.Total, &tally.Done); err != nil {
+			return nil, safeDBError("scan artifact item tally", err)
+		}
+		out[id] = tally
+	}
+	if err := rows.Err(); err != nil {
+		return nil, safeDBError("tally artifact items", err)
+	}
+	return out, nil
+}
+
 func (r *ItemRepo) CountByArtifact(ctx context.Context, workspaceID, artifactID uuid.UUID) (int64, error) {
 	var n int64
 	if err := postgres.Conn(ctx, r.pool).QueryRow(ctx, `

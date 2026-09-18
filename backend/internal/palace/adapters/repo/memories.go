@@ -37,32 +37,45 @@ func scanMemory(row pgx.Row) (*domain.Memory, error) {
 	return &m, nil
 }
 
-// memoryWhere builds the predicate List and Count share, for the reason
-// roomWhere gives.
+// memoryAlias is the name the memory table carries in every statement
+// built from memoryWhere. See artifactAlias, and visibility.go, which
+// states why nothing in these predicates is left unqualified.
+const memoryAlias = "m"
+
+// memoryWhere builds the predicate List, Count and CountByRoom share, for
+// the reason roomWhere gives.
 func memoryWhere(workspaceID uuid.UUID, f ports.MemoryFilter) (string, []any) {
+	const m = memoryAlias
 	args := []any{workspaceID}
-	clauses := []string{"workspace_id = $1", "deleted_at IS NULL"}
+	clauses := []string{m + ".workspace_id = $1", m + ".deleted_at IS NULL"}
 
 	bind := func(value any) int {
 		args = append(args, value)
 		return len(args)
 	}
 
+	var c containment
 	if !f.IncludeHighlySensitive {
-		clauses = append(clauses, fmt.Sprintf("sensitivity <> $%d",
-			bind(string(domain.SensitivityHighlySensitive))))
+		c.levelBind = fmt.Sprintf("$%d", bind(withheldLevel()))
+		clauses = append(clauses, m+".sensitivity <> "+c.levelBind)
 	}
 	if f.Kind != nil {
-		clauses = append(clauses, fmt.Sprintf("kind = $%d", bind(string(*f.Kind))))
+		clauses = append(clauses, fmt.Sprintf(m+".kind = $%d", bind(string(*f.Kind))))
 	}
 	if f.Status != nil {
-		clauses = append(clauses, fmt.Sprintf("status = $%d", bind(string(*f.Status))))
+		clauses = append(clauses, fmt.Sprintf(m+".status = $%d", bind(string(*f.Status))))
 	}
-	if f.RoomID != nil {
-		clauses = append(clauses, fmt.Sprintf("room_id = $%d", bind(*f.RoomID)))
+	switch {
+	case f.RoomID != nil:
+		clauses = append(clauses, fmt.Sprintf(m+".room_id = $%d", bind(*f.RoomID)))
+	case f.Unfiled:
+		clauses = append(clauses, m+".room_id IS NULL")
+	}
+	if f.ArtifactID != nil {
+		clauses = append(clauses, fmt.Sprintf(m+".artifact_id = $%d", bind(*f.ArtifactID)))
 	}
 	if f.MinImportance > 0 {
-		clauses = append(clauses, fmt.Sprintf("importance >= $%d", bind(f.MinImportance)))
+		clauses = append(clauses, fmt.Sprintf(m+".importance >= $%d", bind(f.MinImportance)))
 	}
 	if s := strings.TrimSpace(f.Search); s != "" {
 		n := bind(s)
@@ -71,7 +84,14 @@ func memoryWhere(workspaceID uuid.UUID, f ports.MemoryFilter) (string, []any) {
 		// they wrote about it, and a search that only looked at one would
 		// fail on a correct question.
 		clauses = append(clauses, fmt.Sprintf(
-			"(content ILIKE '%%' || $%d || '%%' OR summary ILIKE '%%' || $%d || '%%')", n, n))
+			"("+m+".content ILIKE '%%' || $%d || '%%' OR "+m+".summary ILIKE '%%' || $%d || '%%')", n, n))
+	}
+	if f.InheritRoomVisibility {
+		// D1 on the memory's own room, and D1.1 on the artifact it is
+		// about. Both in one clause, because a surface that applied one hop
+		// and not the other would be a surface with a hole in it. See
+		// visibility.go.
+		clauses = append(clauses, c.memoryContainment(m))
 	}
 	return strings.Join(clauses, " AND "), args
 }
@@ -88,12 +108,12 @@ func (r *MemoryRepo) List(ctx context.Context, workspaceID uuid.UUID, f ports.Me
 	// updated_at DESC and not importance: see ports.MemoryFilter on why
 	// importance is a floor rather than an ordering.
 	rows, err := postgres.Conn(ctx, r.pool).Query(ctx, fmt.Sprintf(`
-		SELECT %s
-		FROM palace.memories
-		WHERE %s
-		ORDER BY updated_at DESC, id
-		LIMIT $%d OFFSET $%d`,
-		memoryCols, predicate, limitAt, offsetAt), args...)
+		SELECT %[1]s
+		FROM palace.memories %[2]s
+		WHERE %[3]s
+		ORDER BY %[2]s.updated_at DESC, %[2]s.id
+		LIMIT $%[4]d OFFSET $%[5]d`,
+		memoryCols, memoryAlias, predicate, limitAt, offsetAt), args...)
 	if err != nil {
 		return nil, safeDBError("list memories", err)
 	}
@@ -113,14 +133,78 @@ func (r *MemoryRepo) List(ctx context.Context, workspaceID uuid.UUID, f ports.Me
 	return out, nil
 }
 
+// Count is List's predicate, applied to a count. See ArtifactRepo.Count,
+// which states why the sharing is the mechanism and not a convenience.
 func (r *MemoryRepo) Count(ctx context.Context, workspaceID uuid.UUID, f ports.MemoryFilter) (int64, error) {
 	predicate, args := memoryWhere(workspaceID, f)
 	var n int64
 	if err := postgres.Conn(ctx, r.pool).QueryRow(ctx, fmt.Sprintf(`
-		SELECT count(*) FROM palace.memories WHERE %s`, predicate), args...).Scan(&n); err != nil {
+		SELECT count(*) FROM palace.memories %s WHERE %s`,
+		memoryAlias, predicate), args...).Scan(&n); err != nil {
 		return 0, safeDBError("count memories", err)
 	}
 	return n, nil
+}
+
+// CountByRoom is Count, grouped. See ArtifactRepo.CountByRoom.
+func (r *MemoryRepo) CountByRoom(ctx context.Context, workspaceID uuid.UUID, f ports.MemoryFilter) ([]ports.RoomCount, error) {
+	f.RoomID, f.Unfiled = nil, false
+	f.Limit, f.Offset = 0, 0
+	predicate, args := memoryWhere(workspaceID, f)
+
+	rows, err := postgres.Conn(ctx, r.pool).Query(ctx, fmt.Sprintf(`
+		SELECT %[1]s.room_id, count(*)
+		FROM palace.memories %[1]s
+		WHERE %[2]s
+		GROUP BY %[1]s.room_id`, memoryAlias, predicate), args...)
+	if err != nil {
+		return nil, safeDBError("count memories by room", err)
+	}
+	defer rows.Close()
+
+	return scanRoomCounts(rows, "count memories by room")
+}
+
+// ListByIDs resolves a known set of ids under a surface's rules.
+//
+// It carries the transitive rule with it, because it builds the same
+// filter the listing builds: a memory about an artifact in a withheld
+// room is not selected here either. See ArtifactRepo.ListByIDs.
+func (r *MemoryRepo) ListByIDs(ctx context.Context, workspaceID uuid.UUID, ids []uuid.UUID, v ports.Visibility) ([]*domain.Memory, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	predicate, args := memoryWhere(workspaceID, ports.MemoryFilter{
+		Sensitive:             ports.Sensitive{IncludeHighlySensitive: v.IncludeHighlySensitive},
+		InheritRoomVisibility: v.InheritRoomVisibility,
+	})
+	args = append(args, ids)
+	idsAt := len(args)
+
+	rows, err := postgres.Conn(ctx, r.pool).Query(ctx, fmt.Sprintf(`
+		SELECT %[1]s
+		FROM palace.memories %[2]s
+		WHERE %[3]s AND %[2]s.id = ANY($%[4]d)
+		ORDER BY %[2]s.updated_at DESC, %[2]s.id`,
+		memoryCols, memoryAlias, predicate, idsAt), args...)
+	if err != nil {
+		return nil, safeDBError("resolve memories", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.Memory, 0, len(ids))
+	for rows.Next() {
+		m, err := scanMemory(rows)
+		if err != nil {
+			return nil, safeDBError("scan memory", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, safeDBError("resolve memories", err)
+	}
+	return out, nil
 }
 
 func (r *MemoryRepo) FindByID(ctx context.Context, workspaceID, id uuid.UUID) (*domain.Memory, error) {
