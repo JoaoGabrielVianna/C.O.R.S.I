@@ -9,6 +9,7 @@
 
 import type { Fit } from "../scene/fit";
 import type { BuildingBounds } from "./bounds";
+import { applyCamera, OVERVIEW_CAMERA, type Camera } from "./camera";
 import { toBuildingPoint } from "./fit";
 import type { HouseItem } from "./houseModel";
 
@@ -49,17 +50,33 @@ export interface InspectorPlacement {
  * a leader line, an arrow or anything that would need its own geometry.
  *
  * ── Pure, and clamped rather than clever ───────────────────────────────
- * A function of the item's own box, the bounds and the fit. It reads no
- * DOM, measures nothing, and cannot move anything in the scene: it only
- * decides where a panel is pinned. Every result is clamped inside the
- * stage, so the panel is never half off the edge on a small window, and
- * it falls back to the full-width sheet at the bottom when the stage is
- * too narrow to have a "beside".
+ * A function of the item's own box, the bounds, the fit and the camera. It
+ * reads no DOM, measures nothing, and cannot move anything in the scene:
+ * it only decides where a panel is pinned. Every result is clamped inside
+ * the stage, so the panel is never half off the edge on a small window,
+ * and it falls back to the full-width sheet at the bottom when the stage
+ * is too narrow to have a "beside".
+ *
+ * ── Why the camera arrives here and not as a composed `Fit` ────────────
+ * Because two different questions are being asked of two different
+ * transforms, and folding them into one would answer both wrongly.
+ *
+ *	the OBJECT moved      the camera scaled and translated the drawing,
+ *	                      so the object is somewhere else on the stage
+ *	the STAGE did not     the panel is a screen-space layer OUTSIDE the
+ *	                      transformed drawing, so its room to work in is
+ *	                      still the stage the fit was measured against
+ *
+ * A `Fit` with the camera multiplied into it would carry a stage size
+ * recovered from `offsetX * 2 + width * scale`, which under a camera is
+ * not the stage any more. So the camera moves the point and leaves the
+ * frame alone, and the panel keeps its own type size at every zoom.
  */
 export function inspectorPlacement(
   item: HouseItem | null,
   bounds: BuildingBounds,
   fit: Fit | null,
+  camera: Camera = OVERVIEW_CAMERA,
 ): InspectorPlacement {
   /*
     ── Why the cap travels as a value and not as `max-h-full` ──────────
@@ -80,8 +97,14 @@ export function inspectorPlacement(
   // panel: the sheet at the bottom, which is what small viewports get.
   if (!item || !fit) return SHEET;
 
-  const left = toBuildingPoint({ x: item.box.minX, y: item.box.minY }, bounds, fit);
-  const right = toBuildingPoint({ x: item.box.maxX, y: item.box.maxY }, bounds, fit);
+  const left = applyCamera(
+    camera,
+    toBuildingPoint({ x: item.box.minX, y: item.box.minY }, bounds, fit),
+  );
+  const right = applyCamera(
+    camera,
+    toBuildingPoint({ x: item.box.maxX, y: item.box.maxY }, bounds, fit),
+  );
   const stageWidth = fit.offsetX * 2 + bounds.width * fit.scale;
   const stageHeight = fit.offsetY * 2 + bounds.height * fit.scale;
 
