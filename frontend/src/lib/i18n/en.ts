@@ -351,6 +351,17 @@ export const en: Translations = {
         mapEmptyTitle: "No rooms yet",
         mapEmptyBody:
           "The Palace is built by talking to an authorized agent. Whatever you ask it to keep shows up here.",
+        buildingLabel: "Your Palace, as one building",
+        buildingDescription: "The rooms of your Palace and what is kept inside them.",
+        morePileInRoom: "{count} more in {room}",
+        memoriesOfRoom: "Memories of {room}",
+        objectInRoom: "{object}, in {room}",
+        openRoomShort: "Open the room",
+        openDetails: "Open details",
+        tooSmallBuildingTitle: "The building does not fit this screen",
+        tooSmallBuildingBody:
+          "At this width the rooms would be too small to press. These are the same rooms, as a list.",
+        forceBuilding: "Show the building anyway",
         unfiledTitle: "No room",
         unfiledBody: "What has not been filed anywhere yet.",
         openRoom: "Open the room {name}",

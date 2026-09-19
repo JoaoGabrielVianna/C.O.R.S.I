@@ -359,6 +359,18 @@ export const pt = {
         mapEmptyTitle: "Nenhuma sala ainda",
         mapEmptyBody:
           "O Palace se constrói conversando com um agente autorizado. O que você pedir para guardar aparece aqui.",
+        buildingLabel: "O prédio do seu Palace",
+        buildingDescription:
+          "As salas do seu Palace e o que está guardado dentro delas.",
+        morePileInRoom: "Mais {count} em {room}",
+        memoriesOfRoom: "Memórias de {room}",
+        objectInRoom: "{object}, em {room}",
+        openRoomShort: "Abrir a sala",
+        openDetails: "Abrir detalhes",
+        tooSmallBuildingTitle: "O prédio não cabe nesta tela",
+        tooSmallBuildingBody:
+          "Nesta largura as salas ficariam pequenas demais para tocar. Estas são as mesmas salas em lista.",
+        forceBuilding: "Ver o prédio mesmo assim",
         unfiledTitle: "Sem sala",
         unfiledBody: "O que ainda não foi guardado em lugar nenhum.",
         openRoom: "Abrir a sala {name}",
