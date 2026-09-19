@@ -1,29 +1,34 @@
 /**
- * Measuring the container, and nothing else.
+ * The room's fit, and the D5 verdict that follows.
  *
  * ══════════════════════════════════════════════════════════════════════
  *
- *   THE ONLY PLACE IN PALACE THAT KNOWS HOW BIG THE SCREEN IS
+ *   THE GEOMETRY NEVER LEARNS THE VIEWPORT. THIS FILE DOES THE LEARNING
  *
  * ══════════════════════════════════════════════════════════════════════
  *
  * `layout()` is pure and `sceneBounds()` is pure; both would be poisoned
- * by a width. So the measurement stops here: a `ResizeObserver` reports
- * the element's size, `fitScene` turns that into a scale and a verdict,
- * and nothing flows back into the geometry. Resizing a window changes how
+ * by a width. So the measurement stops here: `useMeasuredBox` reports the
+ * element's size, `fitScene` turns that into a scale and a verdict, and
+ * nothing flows back into the geometry. Resizing a window changes how
  * large the room is drawn. It never changes the room.
+ *
+ * The measurement itself moved to `useMeasuredBox` when the building
+ * needed the same box measured against a different target size. The
+ * signature, the behaviour and the thresholds here are unchanged.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
-import { fitScene, type Fit, type SceneMode, type Size } from "../scene/fit";
+import { fitScene, type Fit, type SceneMode } from "../scene/fit";
 import type { SceneBounds } from "../scene/sceneBounds";
+import { useMeasuredBox } from "./useMeasuredBox";
 
 export function useSceneFit(
   bounds: SceneBounds,
   forced: boolean,
 ): { ref: (el: HTMLElement | null) => void; fit: Fit | null } {
-  const [size, setSize] = useState<Size | null>(null);
+  const { ref, size } = useMeasuredBox();
   /**
    * The mode currently on screen, which is what the hysteresis compares
    * against.
@@ -37,39 +42,9 @@ export function useSceneFit(
    * flash of the wrong surface.
    */
   const [mode, setMode] = useState<SceneMode>("spatial");
-  const observed = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    const el = observed.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-
-    // Measured FIRST, so the room exists on the very first paint. The
-    // observer fires immediately afterwards and its value wins: doing it
-    // the other way round let a stale rect overwrite a live measurement,
-    // which made the room ignore a narrow container entirely.
-    const first = el.getBoundingClientRect();
-    setSize({ width: first.width, height: first.height });
-
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (!rect) return;
-      setSize((prev) =>
-        prev && prev.width === rect.width && prev.height === rect.height
-          ? prev
-          : { width: rect.width, height: rect.height },
-      );
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   const fit = size ? fitScene(bounds, size, mode, forced) : null;
   if (fit && fit.mode !== mode) setMode(fit.mode);
 
-  return {
-    ref: (el) => {
-      observed.current = el;
-    },
-    fit,
-  };
+  return { ref, fit };
 }
