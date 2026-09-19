@@ -35,9 +35,35 @@
  * Same shape as `RoomView`: this page measures, decides between the house
  * and the list, and computes no position. Every point it draws came from
  * `placeBuilding()` and `furnishRoom()`.
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ *   THE READER NEVER LEAVES THE PALACE. THEY CHANGE FOCUS INSIDE IT
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * There are not rooms you go into and come out of. There is one Palace,
+ * and attention moves around in it:
+ *
+ *	overview   the whole house
+ *	focus      the camera brings one room forward; the rest of the
+ *	           Palace stays drawn, quieter, in place
+ *	inspect    an object opens where it stands, as it always did
+ *	overview   the camera goes back
+ *
+ * Which is why focusing a room is a CAMERA and not a route, not a layout
+ * and not a piece of domain state:
+ *
+ *	Room is environment · Artifact is object · Camera is presentation
+ *
+ * The focus lives in this component's `useState` and nowhere else. It is
+ * not in the URL, not in storage, not on the wire and not in the Palace.
+ * A refresh returns to the overview, and that is the correct amount of
+ * memory for where somebody happened to be looking.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/Button";
@@ -51,6 +77,7 @@ import { decorationFor } from "@/modules/palace/scene/decoration";
 import { BuildingFrame } from "@/modules/palace/building/BuildingFrame";
 import { HouseInspector } from "@/modules/palace/building/HouseInspector";
 import { buildingBounds } from "@/modules/palace/building/bounds";
+import { cameraForRoom, OVERVIEW_CAMERA } from "@/modules/palace/building/camera";
 import {
   buildingRoomsOf,
   interiorArtifactsByRoom,
@@ -156,6 +183,29 @@ export function PalaceMap() {
   const [selected, setSelected] = useState<HouseItem | null>(null);
   const [returnFocusKey, setReturnFocusKey] = useState<string | null>(null);
 
+  /*
+    ══════════════════════════════════════════════════════════════════════
+      FOCUS IS AN ID THIS COMPONENT HOLDS, AND NOTHING ELSE ANYWHERE
+    ══════════════════════════════════════════════════════════════════════
+
+    Not a route, not a query parameter, not `localStorage`, not a field on
+    Room, not a migration. The camera is derived from it and the camera is
+    derived from geometry that already existed, so the entire cost of this
+    state is one string that dies with the component.
+
+    A room the surface stops returning — archived, withheld, deleted
+    elsewhere — simply stops matching here, and the view is the overview
+    again. There is no stale coordinate to clean up because there is no
+    coordinate.
+  */
+  const [focusedRoomId, setFocusedRoomId] = useState<string | null>(null);
+  const focusedRoom = layout.rooms.find((room) => room.roomId === focusedRoomId) ?? null;
+  /* The object the reader was looking at when they focused the room. It is
+     where focus goes back to on the way out, so leaving the focused view
+     is not a trip to the top of the document. */
+  const focusOriginKey = useRef<string | null>(null);
+  const overviewButton = useRef<HTMLButtonElement | null>(null);
+
   const byId = new Map(rooms.map((room) => [room.room_id, room]));
   const nameOf = (roomId: string) => byId.get(roomId)?.name ?? "";
   const titleOf = new Map(artifactRows.map((row) => [row.artifact_id, row.title]));
@@ -222,27 +272,77 @@ export function PalaceMap() {
 
   const closeInspector = () => {
     setSelected(null);
-    /*
-      Focus goes back where it came from. A panel that closes onto the top
-      of the document loses a keyboard reader's place entirely.
+    if (returnFocusKey) focusObject(returnFocusKey);
+  };
 
-      The element is found by COMPARING rather than by a selector: an
-      attribute selector would need the key escaped, and `CSS.escape` is a
-      browser global that is simply absent in some environments. The room's
-      inspector used it once, threw where it was missing, and the focus
-      silently never returned — with a test that passed anyway, because
-      focus had not moved in the first place.
-    */
-    if (!returnFocusKey) return;
+  /*
+    Focusing a room from the object that is open.
+
+    The inspector closes, because the reader asked to look at the room and
+    a panel of prose in front of it would be looking at the panel. The key
+    of the object they came from is kept so that the way out lands there.
+  */
+  const focusRoom = (roomId: string) => {
+    focusOriginKey.current = selected?.key ?? null;
+    setSelected(null);
+    setFocusedRoomId(roomId);
+  };
+
+  const showOverview = () => {
+    setFocusedRoomId(null);
+    setSelected(null);
+    const origin = focusOriginKey.current;
+    focusOriginKey.current = null;
+    if (origin) focusObject(origin);
+  };
+
+  /*
+    Puts focus on one object of the house.
+
+    The element is found by COMPARING rather than by a selector: an
+    attribute selector would need the key escaped, and `CSS.escape` is a
+    browser global that is simply absent in some environments. The room's
+    inspector used it once, threw where it was missing, and the focus
+    silently never returned — with a test that passed anyway, because focus
+    had not moved in the first place.
+
+    A frame later, because the element it is looking for may be one the
+    render now in flight is about to put back into the tab order.
+  */
+  function focusObject(key: string) {
     requestAnimationFrame(() => {
       const target = [...document.querySelectorAll<HTMLButtonElement>("[data-hit-key]")].find(
-        (el) => el.dataset.hitKey === returnFocusKey,
+        (el) => el.dataset.hitKey === key,
       );
       target?.focus();
     });
-  };
+  }
 
-  const placement = inspectorPlacement(selected, bounds, fit);
+  /*
+    ══════════════════════════════════════════════════════════════════════
+      FOCUS HAS TO LAND SOMEWHERE, AND IT LANDS ON THE WAY OUT
+    ══════════════════════════════════════════════════════════════════════
+
+    Entering focus unmounts the inspector the reader pressed the button in,
+    so without this, focus falls to the document body and a keyboard reader
+    is nowhere. It goes to "overview", which is the one control that is
+    always present in this state and is also the way back.
+  */
+  useEffect(() => {
+    if (focusedRoomId) overviewButton.current?.focus();
+  }, [focusedRoomId]);
+
+  /*
+    The camera. Derived from the focused room's EXISTING world box and the
+    fit that the overview already computed — never from a second layout,
+    and never written anywhere.
+  */
+  const camera =
+    focusedRoom && fit && fit.mode === "spatial"
+      ? cameraForRoom(focusedRoom, bounds, fit)
+      : OVERVIEW_CAMERA;
+
+  const placement = inspectorPlacement(selected, bounds, fit, camera);
 
   const isPending = overview.isPending || artifacts.isPending;
   const error = overview.error ?? artifacts.error;
@@ -253,14 +353,36 @@ export function PalaceMap() {
       className="flex min-h-0 flex-1 flex-col gap-4 px-4 py-6 sm:px-6"
       onKeyDown={(e) => {
         /*
-          Escape is caught for the whole surface, not just for the panel.
-          Activating an object leaves focus ON THE OBJECT, so a handler
-          bound to the panel would only work for somebody who had already
-          tabbed into it — which is nobody, immediately after opening it.
+          ══════════════════════════════════════════════════════════════
+            ESCAPE UNDOES ONE THING, AND ALWAYS THE INNERMOST ONE
+          ══════════════════════════════════════════════════════════════
+
+            inspector open   closes the inspector, focus back on the
+                             exact object it came from. Unchanged from
+                             C1.2, and the camera does not move
+            room focused     returns to the overview, focus back on the
+                             object the reader focused the room from
+            overview         nothing. Escape belongs to whatever is
+                             outside this surface
+
+          Caught for the whole surface rather than on the panel, because
+          activating an object leaves focus ON THE OBJECT: a handler bound
+          to the panel would only work for somebody who had already tabbed
+          into it, which is nobody, immediately after opening it.
+
+          One step per press, in that order. Collapsing both would close a
+          panel and re-frame the Palace on the same keystroke, and the
+          reader would have undone something they did not ask to undo.
         */
-        if (e.key === "Escape" && selected) {
+        if (e.key !== "Escape") return;
+        if (selected) {
           e.stopPropagation();
           closeInspector();
+          return;
+        }
+        if (focusedRoom) {
+          e.stopPropagation();
+          showOverview();
         }
       }}
     >
@@ -402,11 +524,89 @@ export function PalaceMap() {
               labelOf={labelOf}
               onActivate={activate}
               selectedKey={selected?.key}
+              camera={camera}
+              focusedRoomId={focusedRoom?.roomId ?? null}
               buildingLabel={t.app.palace.scene.buildingLabel}
               buildingDescription={t.app.palace.scene.buildingDescription}
             />
           )}
         </div>
+
+        {/*
+          ══════════════════════════════════════════════════════════════
+            THE ZOOM IS NOT THE ONLY THING THAT SAYS A ROOM IS FOCUSED
+          ══════════════════════════════════════════════════════════════
+
+          A reader who cannot see the camera move would otherwise have a
+          silently rearranged tab order and no explanation. So the state is
+          said in words, and the way out is a real, named, always-present
+          control rather than a gesture somebody has to guess.
+
+          The live region is permanent in the DOM and carries text only
+          while a room is focused — the same shape the Library's refresh
+          indicator uses, and for the same reason: a region that mounts
+          along with its message is a region assistive technology may
+          never announce.
+        */}
+        <p role="status" data-testid="palace-focus-status" className="sr-only">
+          {focusedRoom ? t.app.palace.scene.focusedRoom.replace("{name}", nameOf(focusedRoom.roomId)) : ""}
+        </p>
+
+        {focusedRoom && fit && fit.mode === "spatial" ? (
+          /*
+            ══════════════════════════════════════════════════════════════
+              WHERE YOU ARE, AND THE WAY BACK. NOT A SEGMENTED CONTROL
+            ══════════════════════════════════════════════════════════════
+
+            The first version put the room's name and the return side by
+            side in one bordered pill, and it read as a pair of tabs: two
+            things of equal weight, one of them apparently selected. That
+            is a SaaS control, and it says the Palace has modes. It does
+            not. There is one place and the reader is looking at part of
+            it.
+
+            So the two are stacked and weighted differently, which is the
+            shape `RoomView` already uses for exactly this relationship: a
+            quiet way back above, the name of where you are below, in the
+            page's own ink. Nothing here is bordered, boxed or filled — the
+            halo is the only thing behind the text, and it exists so a name
+            crossing a patterned floor stays legible, not to make a surface
+            for it to sit on. The same decision the room captions took in
+            C1.2.
+
+            The name is `aria-hidden` on purpose: it already reaches a
+            screen reader twice, once from the live region and once inside
+            the return button's own accessible name. A third copy would be
+            noise, not information.
+          */
+          <div
+            data-testid="palace-focus-bar"
+            className="pointer-events-none absolute top-4 left-4 z-20 flex flex-col items-start"
+          >
+            <Button
+              ref={overviewButton}
+              variant="ghost"
+              size="sm"
+              data-testid="palace-overview-button"
+              onClick={showOverview}
+              aria-label={t.app.palace.scene.overviewFrom.replace(
+                "{name}",
+                nameOf(focusedRoom.roomId),
+              )}
+              className="pointer-events-auto -ml-2 h-7 gap-1.5 px-2 text-xs font-medium text-(--color-muted-foreground) hover:text-(--color-foreground)"
+            >
+              <ArrowLeft aria-hidden="true" />
+              {t.app.palace.scene.overview}
+            </Button>
+            <span
+              aria-hidden="true"
+              data-testid="palace-focus-name"
+              className="mt-0.5 max-w-64 truncate text-lg font-semibold [text-shadow:0_0_6px_var(--color-card),0_0_6px_var(--color-card),0_0_12px_var(--color-card)]"
+            >
+              {nameOf(focusedRoom.roomId)}
+            </span>
+          </div>
+        ) : null}
 
         {/*
           The inspector, OVER the house rather than instead of it.
@@ -433,6 +633,8 @@ export function PalaceMap() {
               item={selected}
               roomName={selected.roomId ? nameOf(selected.roomId) : ""}
               onClose={closeInspector}
+              onFocusRoom={fit && fit.mode === "spatial" ? focusRoom : undefined}
+              focusedRoomId={focusedRoom?.roomId ?? null}
               maxHeight={placement.panelMaxHeight}
             />
           </div>

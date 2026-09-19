@@ -346,8 +346,9 @@ export const en: Translations = {
       scene: {
         open: "Open",
         mapTitle: "Palace",
-        mapDescription:
-          "The areas of your Palace. Each one opens onto the space where things are.",
+        // Never "opens": since C2 a room is not a destination you go to, it
+        // is part of the place the reader is already in.
+        mapDescription: "Your spaces and the things that live in them.",
         mapEmptyTitle: "No rooms yet",
         mapEmptyBody:
           "The Palace is built by talking to an authorized agent. Whatever you ask it to keep shows up here.",
@@ -356,7 +357,13 @@ export const en: Translations = {
         morePileInRoom: "{count} more in {room}",
         memoriesOfRoom: "Memories of {room}",
         objectInRoom: "{object}, in {room}",
-        openRoomShort: "Open the room",
+        // Moving the camera to a room, and back out to the whole Palace.
+        // Never "open" or "go to": nobody leaves and nothing loads.
+        focusRoomShort: "Look at this room",
+        focusRoom: "Look at the room {name}",
+        focusedRoom: "Looking at {name}. The rest of your Palace is still around it.",
+        overview: "Whole Palace",
+        overviewFrom: "Leave {name} and see the whole Palace",
         openDetails: "Open details",
         tooSmallBuildingTitle: "The building does not fit this screen",
         tooSmallBuildingBody:

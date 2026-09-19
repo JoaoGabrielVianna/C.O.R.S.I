@@ -60,6 +60,40 @@ export interface HouseInspectorProps {
   roomName: string;
   onClose: () => void;
   /**
+   * Move the Palace's attention to the room this object stands in.
+   *
+   * ══════════════════════════════════════════════════════════════════
+   *
+   *   THIS USED TO BE A LINK OUT OF THE PALACE. IT IS A CAMERA NOW
+   *
+   * ══════════════════════════════════════════════════════════════════
+   *
+   * It pointed at `/rooms/:roomId`, which unmounted the house and put a
+   * different page on screen — the teleport this whole surface exists to
+   * avoid, reached from inside the one panel that had just proved it was
+   * not necessary. The room is here. Looking at it is a change of view,
+   * not a change of address, and the address does not move.
+   *
+   * The route still exists for deep links, for the Library and for the
+   * fallback list. It is simply no longer how somebody looks at a room
+   * they can already see.
+   *
+   * Absent when there is no house to move the camera around — the small
+   * -screen fallback — in which case the panel offers no room action at
+   * all rather than a control that would do nothing.
+   */
+  onFocusRoom?: (roomId: string) => void;
+  /**
+   * Which room the Palace is already looking at.
+   *
+   * An object standing in THAT room offers no "look at this room": the
+   * reader is already looking at it, and a control that would do nothing
+   * is the affordance-that-lies this surface refuses everywhere else. An
+   * object in any other room still offers it, which is how attention moves
+   * from one room to the next without returning to the overview first.
+   */
+  focusedRoomId?: string | null;
+  /**
    * The tallest this panel may be, as a CSS length.
    *
    * Handed down rather than expressed as `max-h-full`: the anchor is
@@ -70,7 +104,14 @@ export interface HouseInspectorProps {
   maxHeight: string;
 }
 
-export function HouseInspector({ item, roomName, onClose, maxHeight }: HouseInspectorProps) {
+export function HouseInspector({
+  item,
+  roomName,
+  onClose,
+  onFocusRoom,
+  focusedRoomId = null,
+  maxHeight,
+}: HouseInspectorProps) {
   const t = useT();
 
   return (
@@ -96,9 +137,21 @@ export function HouseInspector({ item, roomName, onClose, maxHeight }: HouseInsp
       className="pointer-events-auto overflow-y-auto rounded-2xl border border-(--color-accent)/45 bg-(--color-card)/97 p-4 shadow-(--shadow-lift) ring-1 ring-(--color-accent)/10 backdrop-blur-sm"
     >
       {item.type === "memory" ? (
-        <MemoryPanel item={item} roomName={roomName} onClose={onClose} />
+        <MemoryPanel
+          item={item}
+          roomName={roomName}
+          onClose={onClose}
+          onFocusRoom={onFocusRoom}
+          focusedRoomId={focusedRoomId}
+        />
       ) : (
-        <ArtifactPanel item={item} roomName={roomName} onClose={onClose} />
+        <ArtifactPanel
+          item={item}
+          roomName={roomName}
+          onClose={onClose}
+          onFocusRoom={onFocusRoom}
+          focusedRoomId={focusedRoomId}
+        />
       )}
     </aside>
   );
@@ -147,10 +200,14 @@ function ArtifactPanel({
   item,
   roomName,
   onClose,
+  onFocusRoom,
+  focusedRoomId,
 }: {
   item: HouseItem;
   roomName: string;
   onClose: () => void;
+  onFocusRoom?: (roomId: string) => void;
+  focusedRoomId?: string | null;
 }) {
   const t = useT();
   const fmt = useFormat();
@@ -216,25 +273,51 @@ function ArtifactPanel({
                 {t.app.palace.scene.openDetails}
               </Link>
             </Button>
-            {item.roomId ? (
-              <Button variant="ghost" size="sm" asChild>
-                {/*
-                  Short label, full accessible name. Spelling the room out
-                  on the button wrapped the two actions onto a second line
-                  and pushed them under the fold of a panel this width.
-                */}
-                <Link
-                  to={`/app/modules/palace/rooms/${item.roomId}`}
-                  aria-label={t.app.palace.scene.openRoom.replace("{name}", roomName)}
-                >
-                  {t.app.palace.scene.openRoomShort}
-                </Link>
-              </Button>
-            ) : null}
+            <FocusRoomAction
+              item={item}
+              roomName={roomName}
+              onFocusRoom={onFocusRoom}
+              focusedRoomId={focusedRoomId}
+            />
           </div>
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * "Look at this room", which moves the camera and stays put otherwise.
+ *
+ * Short label, full accessible name. Spelling the room out on the button
+ * wrapped the two actions onto a second line and pushed them under the
+ * fold of a panel this width.
+ */
+function FocusRoomAction({
+  item,
+  roomName,
+  onFocusRoom,
+  focusedRoomId,
+}: {
+  item: HouseItem;
+  roomName: string;
+  onFocusRoom?: (roomId: string) => void;
+  focusedRoomId?: string | null;
+}) {
+  const t = useT();
+  const roomId = item.roomId;
+  if (!roomId || !onFocusRoom || roomId === focusedRoomId) return null;
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      data-testid="focus-room-action"
+      onClick={() => onFocusRoom(roomId)}
+      aria-label={t.app.palace.scene.focusRoom.replace("{name}", roomName)}
+    >
+      {t.app.palace.scene.focusRoomShort}
+    </Button>
   );
 }
 
@@ -251,10 +334,14 @@ function MemoryPanel({
   item,
   roomName,
   onClose,
+  onFocusRoom,
+  focusedRoomId,
 }: {
   item: HouseItem;
   roomName: string;
   onClose: () => void;
+  onFocusRoom?: (roomId: string) => void;
+  focusedRoomId?: string | null;
 }) {
   const t = useT();
   const fmt = useFormat();
@@ -313,25 +400,16 @@ function MemoryPanel({
               </Link>
             </Button>
             {/*
-              The house's only way into a room, now that the name on the
-              room is a caption rather than a link. Named, secondary, and
-              the reader's choice.
+              The house's way of attending to a room, now that the name on
+              the room is a caption rather than a link. Named, secondary,
+              and the reader's choice.
             */}
-            {item.roomId ? (
-              <Button variant="ghost" size="sm" asChild>
-                {/*
-                  Short label, full accessible name. Spelling the room out
-                  on the button wrapped the two actions onto a second line
-                  and pushed them under the fold of a panel this width.
-                */}
-                <Link
-                  to={`/app/modules/palace/rooms/${item.roomId}`}
-                  aria-label={t.app.palace.scene.openRoom.replace("{name}", roomName)}
-                >
-                  {t.app.palace.scene.openRoomShort}
-                </Link>
-              </Button>
-            ) : null}
+            <FocusRoomAction
+              item={item}
+              roomName={roomName}
+              onFocusRoom={onFocusRoom}
+              focusedRoomId={focusedRoomId}
+            />
           </div>
         </>
       ) : (

@@ -354,8 +354,9 @@ export const pt = {
       scene: {
         open: "Abrir",
         mapTitle: "Palace",
-        mapDescription:
-          "As áreas do seu Palace. Cada uma abre no espaço onde as coisas estão.",
+        // Nunca "abre": desde a C2 uma sala não é um destino para onde se
+        // vai, é uma parte do lugar onde a pessoa já está.
+        mapDescription: "Seus espaços e as coisas que vivem neles.",
         mapEmptyTitle: "Nenhuma sala ainda",
         mapEmptyBody:
           "O Palace se constrói conversando com um agente autorizado. O que você pedir para guardar aparece aqui.",
@@ -365,7 +366,13 @@ export const pt = {
         morePileInRoom: "Mais {count} em {room}",
         memoriesOfRoom: "Memórias de {room}",
         objectInRoom: "{object}, em {room}",
-        openRoomShort: "Abrir a sala",
+        // Mover a câmera até uma sala, e voltar para o Palace inteiro.
+        // Nunca "abrir" nem "ir para": ninguém sai e nada carrega.
+        focusRoomShort: "Olhar esta sala",
+        focusRoom: "Olhar a sala {name}",
+        focusedRoom: "Olhando {name}. O resto do seu Palace continua em volta.",
+        overview: "Palace inteiro",
+        overviewFrom: "Sair de {name} e ver o Palace inteiro",
         openDetails: "Abrir detalhes",
         tooSmallBuildingTitle: "O prédio não cabe nesta tela",
         tooSmallBuildingBody:

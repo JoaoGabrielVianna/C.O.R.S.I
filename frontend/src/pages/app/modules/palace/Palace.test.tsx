@@ -460,7 +460,19 @@ it("does not turn a room into a control of any size", async () => {
 });
 
 it("offers the room as a named secondary action inside the inspector", async () => {
-  // The house's one way into a room, now that the name is a caption.
+  // ══════════════════════════════════════════════════════════════════
+  //   C2 CHANGED WHAT THIS ACTION DOES, DELIBERATELY
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // It was a LINK to `/rooms/:roomId`, which unmounted the house and put
+  // another page on screen. That is the teleport this surface exists to
+  // avoid, offered from inside the panel that had just demonstrated it
+  // was unnecessary.
+  //
+  // It is now a button that moves the camera. The room is already here;
+  // looking at it is a change of view, not a change of address. The route
+  // still exists for deep links, for the Library and for the fallback
+  // list — it is simply not how somebody looks at a room they can see.
   const user = userEvent.setup();
   mountMap();
   await screen.findByTestId("palace-building");
@@ -469,8 +481,11 @@ it("offers the room as a named secondary action inside the inspector", async () 
     screen.getByRole("button", { name: `Nota: Uma nota na parede, em ${ROOM_A.name}` }),
   );
   const panel = await screen.findByTestId("house-inspector");
-  const roomLink = within(panel).getByRole("link", { name: `Abrir a sala ${ROOM_A.name}` });
-  expect(roomLink.getAttribute("href")).toBe(`/app/modules/palace/rooms/${ROOM_A.room_id}`);
+  const action = within(panel).getByRole("button", { name: `Olhar a sala ${ROOM_A.name}` });
+
+  // Named for the room it belongs to, and it is not a link anywhere.
+  expect(action.tagName).toBe("BUTTON");
+  expect(within(panel).queryAllByRole("link", { name: /sala/ })).toHaveLength(0);
 });
 
 it("hides the unfiled tray when nothing is unfiled", async () => {
