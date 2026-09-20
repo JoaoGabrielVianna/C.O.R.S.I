@@ -82,6 +82,7 @@ import {
   buildingRoomsOf,
   interiorArtifactsByRoom,
 } from "@/modules/palace/building/fromOverview";
+import { decorateRoom, type RoomDecor } from "@/modules/palace/building/furnishing";
 import { furnishRoom, type InteriorOutput } from "@/modules/palace/building/interior";
 import { houseItems, type HouseItem } from "@/modules/palace/building/houseModel";
 import { inspectorPlacement } from "@/modules/palace/building/inspectorPlacement";
@@ -177,6 +178,29 @@ export function PalaceMap() {
 
   const items = houseItems(layout, interiors);
   const bounds = buildingBounds(layout, interiors);
+
+  /*
+    ══════════════════════════════════════════════════════════════════════
+      DECORATION IS COMPUTED FROM THE FURNISHING, AND AFTER IT
+    ══════════════════════════════════════════════════════════════════════
+
+    The order of these lines is the priority rule, written as code rather
+    than as a promise: the interiors exist, the items exist and the bounds
+    exist BEFORE anything decorative is decided, and `decorateRoom` receives
+    the finished interior. It therefore cannot move an artifact, cannot take
+    a position an artifact has, and cannot change what the camera frames.
+
+    `bounds` in particular does not read this map. Decoration adds nothing
+    to the building's extent, so focusing a room, fitting the house and the
+    D5 verdict are all computed from exactly the geometry they were computed
+    from before any of this existed.
+  */
+  const decor = new Map<string, RoomDecor>(
+    rooms.map((room) => [
+      room.room_id,
+      decorateRoom(room.room_id, interiors.get(room.room_id)!),
+    ]),
+  );
   const forced = search.get(FORCE_PARAM) === "spatial";
   const { ref, fit } = useBuildingFit(bounds, forced);
 
@@ -526,6 +550,7 @@ export function PalaceMap() {
               selectedKey={selected?.key}
               camera={camera}
               focusedRoomId={focusedRoom?.roomId ?? null}
+              decor={decor}
               buildingLabel={t.app.palace.scene.buildingLabel}
               buildingDescription={t.app.palace.scene.buildingDescription}
             />

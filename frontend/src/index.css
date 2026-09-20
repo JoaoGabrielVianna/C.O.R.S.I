@@ -79,9 +79,57 @@
      and dark values are tuned here so adjusting the room never means
      touching a component. */
   --palace-scene-floor: #EEEFF1;
-  --palace-scene-wall: #FFFFFF;
+  /* Off-white, not white. It was #FFFFFF, which is exactly `--color-card`,
+     so a room's back wall was the same value as the surface behind the
+     whole Palace and the cutaway had no rear plane at all: only its
+     outline said a wall was there. One step off the card is enough to make
+     it a plane while keeping it the lightest thing in the room. */
+  --palace-scene-wall: #F8F7F4;
   --palace-scene-object: #FFFFFF;
   --palace-scene-object-side: #DEDFE3;
+
+  /* Furnishing (C3). Aliases again, and two rules hold them together.
+
+     FUNCTIONAL objects keep `--palace-scene-object` and the strong border:
+     they are the things a reader presses, so they carry the most contrast
+     in the room. DECORATIVE pieces are warmer and quieter, with a softer
+     edge, so they read as the place rather than as its contents. The
+     accent is never used here — it belongs to the selected object, and
+     furniture wearing it would compete with the one thing that must stand
+     out. */
+  /* ── The value ladder (C3.1) ──────────────────────────────────────────
+     Read a room from the back forward and the values have to step, or the
+     picture flattens into a diagram of a room. Each of these is a rung,
+     and the order is the thing being tuned, not any single colour:
+
+       wall       #FFFFFF   the brightest plane, and the furthest away
+       furniture  #F2EFE9   sits on the floor, below the wall behind it
+       floor      #E6DED1   the ground, clearly under everything
+       rug        #DDD4C8   a textile ON the ground, one step down only
+
+     The functional object keeps pure white and the strong border, so it
+     stays above every rung here: it is the one thing in the room a reader
+     is meant to press. The floor came DOWN rather than the furniture going
+     up, which buys separation without making anything louder. */
+  --palace-floor-wood: #E6DED1;
+  --palace-floor-wood-line: #D3C7B6;
+  --palace-floor-stone: #E7E8EC;
+  --palace-floor-stone-line: #D6D8DE;
+  /* Only one step below the floor, because a rug is a textile lying on it
+     and not a slab set into it. The strong tan mass the gate reported came
+     from the EDGE more than from the fill, so the edge is what lost most
+     of its weight. */
+  --palace-rug: #DDD4C8;
+  --palace-rug-edge: #C7BCAB;
+  --palace-decor: #F2EFE9;
+  --palace-decor-side: #E0DACF;
+  /* The third face. Two values read as a flat icon lying on the floor;
+     three read as a solid standing on it. */
+  --palace-decor-deep: #D2CBBE;
+  --palace-decor-edge: #CFC7BA;
+  --palace-plant: #9FB09A;
+  --palace-metal: #BCAB92;
+  --palace-trim: #DCD5C9;
 
   /* ── Radii (ERP-exact) ────────────────────────────────────────────────── */
   --radius-xs: 0.375rem;
@@ -139,9 +187,45 @@
   --color-accent-foreground: #0F1012;
   --color-border: #26282E;
   --palace-scene-floor: #1F2126;
-  --palace-scene-wall: #18191D;
-  --palace-scene-object: #26282E;
-  --palace-scene-object-side: #1A1C20;
+  /* Same correction as the light theme, and it matters more here: at
+     #18191D the wall was exactly `--color-card`, so on dark the rear plane
+     of every room was invisible and the rooms lost their enclosure
+     entirely. */
+  --palace-scene-wall: #1E2025;
+  /* Lifted in C3.1. On dark the ladder inverts: the object a reader
+     presses has to be the LIGHTEST thing in the room, and at #26282E it
+     was barely above the floor, which is why the first dark pass read as
+     "the lights are off" rather than as a Palace at night. */
+  --palace-scene-object: #2E3138;
+  --palace-scene-object-side: #1E2025;
+
+  /* Furnishing, re-toned for graphite. The warmth survives as hue and not
+     as lightness: on dark, a warm surface is a slightly red-shifted dark
+     grey, and anything brighter would make the decoration louder than the
+     objects it stands around. */
+  /* ── The same ladder, at night ───────────────────────────────────────
+     Not the light values lifted together: that is how a dark theme turns
+     into a grey one. The floor went DOWN and the things standing on it
+     went up, so the separation comes from the gap rather than from
+     brightness.
+
+       functional  #2E3138   lightest, and the only pressable thing
+       furniture   #272A30
+       rug         #2A2420   warm, one step above the floor
+       floor       #201D1A   deepest, and genuinely dark */
+  --palace-floor-wood: #201D1A;
+  --palace-floor-wood-line: #2C2720;
+  --palace-floor-stone: #1C1E22;
+  --palace-floor-stone-line: #282B31;
+  --palace-rug: #262320;
+  --palace-rug-edge: #3A332A;
+  --palace-decor: #272A30;
+  --palace-decor-side: #1D2025;
+  --palace-decor-deep: #17191D;
+  --palace-decor-edge: #3B3F47;
+  --palace-plant: #5C7062;
+  --palace-metal: #8A7A61;
+  --palace-trim: #2A2C32;
   --color-border-strong: #3A3D44;
   --color-input: #26282E;
   --color-ring: #FF7C3D;

@@ -400,7 +400,15 @@ it("gives each kind its own silhouette", async () => {
   // Four objects, four distinct drawings. Same box, different shapes: the
   // kinds differ in silhouette and never in extent, because a difference
   // in size is a difference a reader would measure.
-  const drawn = [...document.querySelectorAll("[data-paint-key]")].map((g) => g.innerHTML);
+  //
+  // Scoped to the FUNCTIONAL paint keys. C3 put decorative furniture into
+  // the same painted layer, so the unscoped query now also returns plants
+  // and chairs; the subject of this test is the four artifact silhouettes,
+  // and `:not([data-decor])` is what says so. Decoration having its own
+  // marker is the same distinction the rest of the surface makes.
+  const drawn = [...document.querySelectorAll("[data-paint-key]:not([data-decor])")].map(
+    (g) => g.innerHTML,
+  );
   expect(drawn).toHaveLength(4);
   expect(new Set(drawn).size).toBe(4);
 });

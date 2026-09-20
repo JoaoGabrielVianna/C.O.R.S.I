@@ -50,6 +50,15 @@ const TOP = "var(--palace-scene-object)";
 const SIDE = "var(--palace-scene-object-side)";
 const EDGE = "var(--color-border-strong)";
 
+/**
+ * The contact shadow a REAL object gets.
+ *
+ * Raised from 0.10 to 0.14 in C3.1, when the floor came down a step: a
+ * shadow tuned against near-white disappears against wood, and an object
+ * without one stops sitting on the floor. It stays clearly heavier than
+ * the decorative shadow (0.09), because weight is one of the things
+ * telling a reader which objects in this room actually mean something.
+ */
 function Shadow({ at, rx = 18 }: { at: ScenePoint; rx?: number }) {
   return (
     <ellipse
@@ -58,7 +67,7 @@ function Shadow({ at, rx = 18 }: { at: ScenePoint; rx?: number }) {
       rx={rx}
       ry={rx * 0.38}
       fill="currentColor"
-      fillOpacity="0.1"
+      fillOpacity="0.14"
     />
   );
 }

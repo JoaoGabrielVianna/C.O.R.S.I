@@ -31,12 +31,14 @@
 
 import { cn } from "@/lib/utils";
 
-import { project } from "../layout/iso";
+import { depth, project, type ScenePoint } from "../layout/iso";
 import type { Cell } from "../layout/kinds";
 import { decorationFor, type Decoration } from "../scene/decoration";
 import type { Fit } from "../scene/fit";
+import { BuildingDecorPiece } from "./BuildingDecor";
 import { BuildingNotebook, BuildingObject, BuildingPile, BuildingTray } from "./BuildingObjects";
-import { buildingViewBox, roomBox, type BuildingBounds } from "./bounds";
+import { buildingViewBox, objectPoint, roomBox, worldCellOf, type BuildingBounds } from "./bounds";
+import type { DecorPiece, RoomDecor, RugStyle } from "./furnishing";
 import { cameraTransform, OVERVIEW_CAMERA, type Camera } from "./camera";
 import { toBuildingPoint } from "./fit";
 import { focusOrder, paintOrder, type HouseItem } from "./houseModel";
@@ -143,6 +145,14 @@ export interface BuildingFrameProps {
   camera?: Camera;
   /** Which room has the attention, if any. Presentation only. */
   focusedRoomId?: string | null;
+  /**
+   * What furnishes each room, beyond what it contains.
+   *
+   * Presentation only, and computed from the room's own furnishing rather
+   * than beside it: see `furnishing.ts`. Absent for a room means an
+   * unfurnished room, never a missing one.
+   */
+  decor?: ReadonlyMap<string, RoomDecor>;
   buildingLabel: string;
   buildingDescription: string;
 }
@@ -158,10 +168,41 @@ export function BuildingFrame({
   selectedKey,
   camera = OVERVIEW_CAMERA,
   focusedRoomId = null,
+  decor,
   buildingLabel,
   buildingDescription,
 }: BuildingFrameProps) {
-  const painted = paintOrder(items);
+  /*
+    ══════════════════════════════════════════════════════════════════════
+      ONE PAINT PASS FOR OBJECTS AND FURNITURE, SORTED BY DEPTH TOGETHER
+    ══════════════════════════════════════════════════════════════════════
+
+    Decoration has to take part in the painter's algorithm: a plant in a
+    near corner drawn before a far cabinet would appear to be standing
+    behind it, through a wall. So the two lists merge and sort by `z`, the
+    same `u + v` depth everything else in the Palace uses.
+
+    They merge for PAINTING and nowhere else. `houseItems` stays exactly as
+    it was, so the focus order, the hit layer and the D5 verdict never see
+    a decorative piece: it is painted, and that is the whole of its
+    existence.
+  */
+  const decorThings: DecorThing[] = layout.rooms.flatMap((room) => {
+    const furnishing = decor?.get(room.roomId);
+    if (!furnishing) return [];
+    return furnishing.pieces.map((placement) => {
+      const cell = worldCellOf(room, placement.local);
+      return {
+        key: `decor:${room.roomId}:${placement.slot}`,
+        roomId: room.roomId,
+        piece: placement.piece,
+        at: objectPoint(cell),
+        z: depth(cell),
+      };
+    });
+  });
+
+  const painted = mergeByDepth(paintOrder(items), decorThings);
   // Rooms paint back to front too, and every room paints before every
   // object: a shell drawn later would cover the furniture of the room
   // behind it. Two passes rather than one interleaved sort, because the
@@ -221,15 +262,30 @@ export function BuildingFrame({
             {/* Defined once for the whole house rather than once per room:
                 duplicate pattern ids in one document are a collision, and
                 the loser renders as nothing. */}
+            {/*
+              ══════════════════════════════════════════════════════════
+                THE FLOOR IS A MATERIAL NOW, NOT A HATCH
+              ══════════════════════════════════════════════════════════
+
+              Same three treatments, same seed, same mapping: a room's
+              floor does not change. What changed is that they are drawn
+              as wood and stone rather than as grey lines on grey, which
+              is most of the difference between a plan of a building and
+              a picture of one. Two of them are timber and one is stone,
+              and which a room gets still means nothing at all.
+            */}
             <pattern
               id="palace-house-floor-plank"
-              width="32"
-              height="16"
+              width="34"
+              height="17"
               patternUnits="userSpaceOnUse"
               patternTransform="skewY(-26.57)"
             >
-              <rect width="32" height="16" fill="var(--palace-scene-floor)" />
-              <line x1="0" y1="16" x2="32" y2="16" stroke="var(--color-border)" strokeWidth="0.75" />
+              <rect width="34" height="17" fill="var(--palace-floor-wood)" />
+              <line x1="0" y1="17" x2="34" y2="17" stroke="var(--palace-floor-wood-line)" strokeWidth="0.9" />
+              {/* one board joint per row, offset, so the planks read as
+                  boards of a length rather than as endless stripes */}
+              <line x1="20" y1="0" x2="20" y2="17" stroke="var(--palace-floor-wood-line)" strokeWidth="0.7" strokeOpacity="0.7" />
             </pattern>
             <pattern
               id="palace-house-floor-herringbone"
@@ -237,12 +293,15 @@ export function BuildingFrame({
               height="24"
               patternUnits="userSpaceOnUse"
             >
-              <rect width="24" height="24" fill="var(--palace-scene-floor)" />
-              <path d="M0 24 L12 12 L24 24" fill="none" stroke="var(--color-border)" strokeWidth="0.75" />
+              <rect width="24" height="24" fill="var(--palace-floor-wood)" />
+              <path d="M0 24 L12 12 L24 24" fill="none" stroke="var(--palace-floor-wood-line)" strokeWidth="0.9" />
+              <path d="M0 12 L12 0 L24 12" fill="none" stroke="var(--palace-floor-wood-line)" strokeWidth="0.7" strokeOpacity="0.55" />
             </pattern>
-            <pattern id="palace-house-floor-tile" width="24" height="12" patternUnits="userSpaceOnUse">
-              <rect width="24" height="12" fill="var(--palace-scene-floor)" />
-              <rect width="24" height="12" fill="none" stroke="var(--color-border)" strokeWidth="0.75" />
+            <pattern id="palace-house-floor-tile" width="26" height="13" patternUnits="userSpaceOnUse">
+              <rect width="26" height="13" fill="var(--palace-floor-stone)" />
+              <rect width="26" height="13" fill="none" stroke="var(--palace-floor-stone-line)" strokeWidth="0.9" />
+              {/* a single vein, which is what separates stone from a grid */}
+              <path d="M2 11 C8 7 12 9 24 2" fill="none" stroke="var(--palace-floor-stone-line)" strokeWidth="0.6" strokeOpacity="0.6" />
             </pattern>
           </defs>
 
@@ -262,72 +321,37 @@ export function BuildingFrame({
                 opacity={quiet(room.roomId) ? BACKGROUND_OPACITY : 1}
                 style={{ transition: `opacity ${CAMERA_MS}ms var(--ease-premium)` }}
               >
-                <RoomShell room={room} />
+                <RoomShell room={room} rug={decor?.get(room.roomId)?.rug ?? "none"} />
               </g>
             ))}
 
-            {painted.map((item) => (
-              <g
-                key={item.key}
-                data-paint-key={item.key}
-                data-z={item.z}
-                opacity={quiet(item.roomId) ? BACKGROUND_OPACITY : 1}
-                style={{ transition: `opacity ${CAMERA_MS}ms var(--ease-premium)` }}
-              >
-                {/* Behind the object, so the wash lights it rather than
-                    tinting it. */}
-                {selectedKey === item.key ? (
-                  <rect
-                    x={item.box.minX - 6}
-                    y={item.box.minY - 6}
-                    width={item.box.maxX - item.box.minX + 12}
-                    height={item.box.maxY - item.box.minY + 12}
-                    rx="10"
-                    fill="var(--color-accent)"
-                    fillOpacity="0.12"
-                  />
-                ) : null}
+            {painted.map((thing) =>
+              "piece" in thing ? (
+                /*
+                  Furniture. No `data-hit-key` anywhere near it, no name, no
+                  key that resolves to anything in the domain: the id in the
+                  paint key is the room's, which the reader already has from
+                  the shell it is standing in.
+                */
                 <g
-                  className={
-                    selectedKey === item.key
-                      ? "text-(--color-accent)"
-                      : "text-(--color-foreground)"
-                  }
+                  key={thing.key}
+                  data-paint-key={thing.key}
+                  data-decor={thing.piece}
+                  data-z={thing.z}
+                  opacity={quiet(thing.roomId) ? BACKGROUND_OPACITY : 1}
+                  style={{ transition: `opacity ${CAMERA_MS}ms var(--ease-premium)` }}
                 >
-                  {item.type === "artifact" ? (
-                    <BuildingObject kind={item.kind!} at={item.at} />
-                  ) : item.type === "pile" ? (
-                    <BuildingPile at={item.at} />
-                  ) : item.type === "memory" ? (
-                    <BuildingNotebook at={item.at} />
-                  ) : (
-                    <BuildingTray at={item.at} />
-                  )}
+                  <BuildingDecorPiece piece={thing.piece} at={thing.at} />
                 </g>
-                {/*
-                  The open object, marked where it stands.
-
-                  Two stops rather than one: a soft accent wash so the eye
-                  finds it across the whole house, and the ring so the edge
-                  is unambiguous. The panel opens beside this, and these two
-                  together are what say the panel belongs to it. No leader
-                  line, no arrow, nothing that would need geometry of its
-                  own.
-                */}
-                {selectedKey === item.key ? (
-                  <rect
-                    x={item.box.minX - 3}
-                    y={item.box.minY - 3}
-                    width={item.box.maxX - item.box.minX + 6}
-                    height={item.box.maxY - item.box.minY + 6}
-                    rx="7"
-                    fill="none"
-                    stroke="var(--color-accent)"
-                    strokeWidth="2"
-                  />
-                ) : null}
-              </g>
-            ))}
+              ) : (
+                <PaintedItem
+                  key={thing.key}
+                  item={thing}
+                  selectedKey={selectedKey}
+                  quiet={quiet(thing.roomId)}
+                />
+              ),
+            )}
           </g>
         </svg>
 
@@ -503,6 +527,103 @@ export function BuildingFrame({
   );
 }
 
+/** A decorative piece, ready to paint. Never an item, never reachable. */
+interface DecorThing {
+  readonly key: string;
+  readonly roomId: string;
+  readonly piece: DecorPiece;
+  readonly at: ScenePoint;
+  readonly z: number;
+}
+
+/**
+ * Objects and furniture in one back-to-front order.
+ *
+ * Stable and total: depth first, then the key, so two renders of the same
+ * Palace paint identically. Keys cannot collide across the two lists
+ * because a decorative key is prefixed `decor:` and an item key never is.
+ */
+function mergeByDepth(
+  items: readonly HouseItem[],
+  things: readonly DecorThing[],
+): readonly (HouseItem | DecorThing)[] {
+  return [...items, ...things].sort(
+    (a, b) => a.z - b.z || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+  );
+}
+
+/** One real artifact, pile, memory surface or tray. Unchanged by C3. */
+function PaintedItem({
+  item,
+  selectedKey,
+  quiet,
+}: {
+  item: HouseItem;
+  selectedKey?: string;
+  quiet: boolean;
+}) {
+  return (
+    <g
+      data-paint-key={item.key}
+      data-z={item.z}
+      opacity={quiet ? BACKGROUND_OPACITY : 1}
+      style={{ transition: `opacity ${CAMERA_MS}ms var(--ease-premium)` }}
+    >
+      {/* Behind the object, so the wash lights it rather than tinting it. */}
+      {selectedKey === item.key ? (
+        <rect
+          x={item.box.minX - 6}
+          y={item.box.minY - 6}
+          width={item.box.maxX - item.box.minX + 12}
+          height={item.box.maxY - item.box.minY + 12}
+          rx="10"
+          fill="var(--color-accent)"
+          fillOpacity="0.12"
+        />
+      ) : null}
+      <g
+        className={
+          selectedKey === item.key ? "text-(--color-accent)" : "text-(--color-foreground)"
+        }
+      >
+        {item.type === "artifact" ? (
+          <BuildingObject kind={item.kind!} at={item.at} />
+        ) : item.type === "pile" ? (
+          <BuildingPile at={item.at} />
+        ) : item.type === "memory" ? (
+          <BuildingNotebook at={item.at} />
+        ) : (
+          <BuildingTray at={item.at} />
+        )}
+      </g>
+      {/*
+        The open object, marked where it stands.
+
+        Two stops rather than one: a soft accent wash so the eye finds it
+        across the whole house, and the ring so the edge is unambiguous.
+        The panel opens beside this, and these two together are what say
+        the panel belongs to it. No leader line, no arrow, nothing that
+        would need geometry of its own.
+
+        It is also the one thing in the room wearing the accent, which is
+        why no decorative piece is allowed to use it.
+      */}
+      {selectedKey === item.key ? (
+        <rect
+          x={item.box.minX - 3}
+          y={item.box.minY - 3}
+          width={item.box.maxX - item.box.minX + 6}
+          height={item.box.maxY - item.box.minY + 6}
+          rx="7"
+          fill="none"
+          stroke="var(--color-accent)"
+          strokeWidth="2"
+        />
+      ) : null}
+    </g>
+  );
+}
+
 /**
  * One room's cutaway shell: a floor, two walls, and the doorways it shares
  * with the rooms next to it.
@@ -515,7 +636,7 @@ export function BuildingFrame({
  * exactly as the room's own scene seeds it. Two rooms differ so they can be
  * told apart; no difference means anything.
  */
-function RoomShell({ room }: { room: RoomPlacement }) {
+function RoomShell({ room, rug }: { room: RoomPlacement; rug: RugStyle }) {
   const decoration = decorationFor(room.roomId);
   const { u, v } = room.origin;
   const S = ROOM_SPAN;
@@ -561,10 +682,118 @@ function RoomShell({ room }: { room: RoomPlacement }) {
         stroke="var(--color-border-strong)"
         strokeWidth="1"
       />
+
+      {/*
+        The rug, lying on the floor before anything stands on it.
+
+        It is the one decorative piece with no footprint to defend: flat
+        geometry, painted under every object in the room, so it can occupy
+        the middle of the floor without competing with a single interactive
+        target. It is also the cheapest thing in the whole furnishing that
+        makes a room read as lived in.
+
+        Inset from the walls by a margin, so the floor material still shows
+        around it and the room does not read as wall-to-wall carpet.
+      */}
+      {rug !== "none" ? <RoomRug at={at} span={S} style={rug} /> : null}
     </g>
   );
 }
 
+/**
+ * How far the rug is held back from the walls, in cells.
+ *
+ * Measured in Chrome rather than chosen. At 1.05 the rug reached most of
+ * the floor and read as a second floor MATERIAL instead of as something
+ * lying on the first one; at 1.3 the human gate still read it as one of
+ * the strongest masses in the scene. Held further back again, the boards
+ * show all the way round it, the furniture stands at its edges rather than
+ * inside a tan card, and the rug does what a rug is for: it grounds the
+ * middle of the room and stops there.
+ */
+const RUG_INSET = 1.45;
+
+function RoomRug({
+  at,
+  span,
+  style,
+}: {
+  at: (du: number, dv: number, e?: number) => { x: number; y: number };
+  span: number;
+  style: RugStyle;
+}) {
+  const a = RUG_INSET;
+  const b = span - RUG_INSET;
+  const outer = [at(a, a), at(b, a), at(b, b), at(a, b)];
+  const inner = [at(a + 0.4, a + 0.4), at(b - 0.4, a + 0.4), at(b - 0.4, b - 0.4), at(a + 0.4, b - 0.4)];
+  const mid = (a + b) / 2;
+
+  return (
+    <g data-testid="building-rug" data-rug={style}>
+      {/*
+        ── Where the rug's weight actually came from ────────────────────
+        Not the fill. A textile one step below the floor is quiet; a
+        continuous 1px border at full strength around a shape that large is
+        not, and the eye reads the outline as the object. So the fill kept
+        its value and the EDGE lost most of its weight, here and in the
+        pattern below.
+      */}
+      <polygon
+        points={pts(...outer)}
+        fill="var(--palace-rug)"
+        fillOpacity="0.85"
+        stroke="var(--palace-rug-edge)"
+        strokeWidth="0.8"
+        strokeOpacity="0.45"
+      />
+      {style === "bordered" ? (
+        <polygon
+          points={pts(...inner)}
+          fill="none"
+          stroke="var(--palace-rug-edge)"
+          strokeWidth="0.8"
+          strokeOpacity="0.4"
+        />
+      ) : (
+        <>
+          <line
+            x1={at(a, mid - 0.5).x}
+            y1={at(a, mid - 0.5).y}
+            x2={at(b, mid - 0.5).x}
+            y2={at(b, mid - 0.5).y}
+            stroke="var(--palace-rug-edge)"
+            strokeWidth="0.8"
+            strokeOpacity="0.4"
+          />
+          <line
+            x1={at(a, mid + 0.5).x}
+            y1={at(a, mid + 0.5).y}
+            x2={at(b, mid + 0.5).x}
+            y2={at(b, mid + 0.5).y}
+            stroke="var(--palace-rug-edge)"
+            strokeWidth="0.8"
+            strokeOpacity="0.4"
+          />
+        </>
+      )}
+    </g>
+  );
+}
+
+/**
+ * One wall panel, with the trim that makes it read as a wall.
+ *
+ * ── Why trim is worth its two polygons ─────────────────────────────────
+ * A flat quadrilateral with an outline is a diagram of a wall. A baseboard
+ * along the bottom and a rail across it are the two details a person
+ * actually uses to recognise an interior, they cost no layout, no
+ * footprint and no interaction, and they are the cheapest architectural
+ * signal in the whole surface.
+ *
+ * Both are derived from the panel's own corners, so a wall with a doorway
+ * gets trim on each side of the opening and none across it. Nothing here
+ * knows where the room is.
+ */
 function WallPanel({
   a,
   b,
@@ -580,14 +809,45 @@ function WallPanel({
   tone: number;
   face: "back" | "side";
 }) {
+  // A fraction of the panel's own height, so the trim scales with the wall
+  // rather than being a number that happens to look right at one size.
+  const lerp = (
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    t: number,
+  ) => ({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
+
+  const aBase = lerp(a, aTop, 0.16);
+  const bBase = lerp(b, bTop, 0.16);
+  const aRail = lerp(a, aTop, 0.62);
+  const bRail = lerp(b, bTop, 0.62);
+
   return (
-    <polygon
-      points={pts(a, b, bTop, aTop)}
-      fill={face === "back" ? "var(--palace-scene-wall)" : "var(--palace-scene-object-side)"}
-      fillOpacity={face === "back" ? 1 : tone}
-      stroke="var(--color-border-strong)"
-      strokeWidth="1"
-      data-testid="building-wall"
-    />
+    <g>
+      <polygon
+        points={pts(a, b, bTop, aTop)}
+        fill={face === "back" ? "var(--palace-scene-wall)" : "var(--palace-scene-object-side)"}
+        fillOpacity={face === "back" ? 1 : tone}
+        stroke="var(--color-border-strong)"
+        strokeWidth="1"
+        data-testid="building-wall"
+      />
+      <polygon
+        points={pts(a, b, bBase, aBase)}
+        fill="var(--palace-trim)"
+        stroke="var(--palace-decor-edge)"
+        strokeWidth="0.6"
+        data-testid="building-trim"
+      />
+      <line
+        x1={aRail.x}
+        y1={aRail.y}
+        x2={bRail.x}
+        y2={bRail.y}
+        stroke="var(--palace-decor-edge)"
+        strokeWidth="0.8"
+        strokeOpacity="0.85"
+      />
+    </g>
   );
 }
