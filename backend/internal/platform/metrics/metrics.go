@@ -52,6 +52,8 @@ type Registry struct {
 	workspaceMissing  prometheus.Counter
 	workspaceInvalid  prometheus.Counter
 	workspaceSentinel prometheus.Counter
+
+	chatTurnTerminal *prometheus.CounterVec
 }
 
 func New() *Registry {
@@ -94,11 +96,25 @@ func New() *Registry {
 			Namespace: namespace, Subsystem: "workspace", Name: "sentinel_total",
 			Help: "Total times the dev-sentinel workspace was used. Should stay at 0 in production.",
 		}),
+		// How turns END. One series per terminal reason, and the reason
+		// comes from a CLOSED vocabulary the chat domain owns — see
+		// domain.FinishReason.TerminalLabel. A gateway's own finish reason
+		// must never reach this label: it is an open set, and an open set on
+		// a per-turn counter is unbounded cardinality.
+		//
+		// It exists because 14 turns were killed by a router deadline over
+		// two weeks and nothing counted them. `rate(...{reason="deadline"})`
+		// is the alert that would have said so on day one.
+		chatTurnTerminal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Subsystem: "chat", Name: "turn_terminal_total",
+			Help: "Total assistant turns by how they ended (stop, length, aborted, deadline, error, tool_round_limit, other).",
+		}, []string{"reason"}),
 	}
 
 	r.MustRegister(
 		out.httpRequestsTotal, out.httpDuration, out.httpStatusTotal, out.httpRouteCount,
 		out.workspaceTotal, out.workspaceMissing, out.workspaceInvalid, out.workspaceSentinel,
+		out.chatTurnTerminal,
 	)
 	return out
 }
@@ -152,6 +168,28 @@ func (r *Registry) Workspace() WorkspaceRecorder {
 		invalid:  r.workspaceInvalid,
 		sentinel: r.workspaceSentinel,
 	}
+}
+
+// Chat returns the recorder the chat module counts terminal turns with.
+//
+// Same arrangement as Workspace: the module declares the interface it
+// needs (ports.TurnMetrics) and this satisfies it, so the module never
+// imports a registry and a build with no metrics is a valid build.
+func (r *Registry) Chat() TurnRecorder {
+	return TurnRecorder{terminal: r.chatTurnTerminal}
+}
+
+// TurnRecorder satisfies chat/ports.TurnMetrics. A value type, like
+// WorkspaceRecorder, so callers pass it cheaply.
+type TurnRecorder struct {
+	terminal *prometheus.CounterVec
+}
+
+func (r TurnRecorder) TurnTerminal(reason string) {
+	if r.terminal == nil {
+		return
+	}
+	r.terminal.WithLabelValues(reason).Inc()
 }
 
 // WorkspaceRecorder satisfies workspace.Recorder. Kept as a value type

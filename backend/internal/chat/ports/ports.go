@@ -794,3 +794,33 @@ type LLM interface {
 	// itself even though it cannot read the global spend logs.
 	KeyInfo(ctx context.Context, creds Credentials) (KeySpend, error)
 }
+
+// TurnMetrics counts how turns END.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	SAFE METADATA ONLY — NEVER CONTENT
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// ── Why this port exists at all ────────────────────────────────────────
+// R1 asked one question of the running system — "why was this turn
+// interrupted?" — and could not answer it without reading source code and
+// reconstructing the turn by hand from three tables. Fourteen turns had
+// been killed by a router deadline over two weeks and nothing counted them.
+//
+// ── Why it takes a label and not a turn ────────────────────────────────
+// Because a port that took the turn would eventually be handed the prompt.
+// The only argument is a terminal reason from a CLOSED vocabulary — see
+// domain.FinishReason.TerminalLabel — which bounds the label cardinality
+// the metric can ever have and makes a content leak through this interface
+// impossible to write rather than merely against the rules.
+//
+// Declared here, in the consuming module, and satisfied by
+// platform/metrics. Same arrangement the workspace middleware uses, and for
+// the same reason: the module names an interface, never a registry.
+//
+// Nil is a valid deployment: a binary with no metrics runs the same turns.
+type TurnMetrics interface {
+	TurnTerminal(reason string)
+}

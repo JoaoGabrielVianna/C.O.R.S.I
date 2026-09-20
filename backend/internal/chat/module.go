@@ -48,6 +48,10 @@ type Deps struct {
 	// `Module → Module` and `Module → Integration` from becoming real
 	// imports the day the first real tool ships.
 	Tools []ports.Tool
+	// TurnMetrics counts how turns end, by terminal reason. Optional: a
+	// deployment that wires nothing still gets the structured terminal log,
+	// and loses only the aggregate. See ports.TurnMetrics.
+	TurnMetrics ports.TurnMetrics
 	// InternalTools admits the built-in diagnostic tools into the registry.
 	//
 	// False in production, and false is the zero value on purpose: a
@@ -107,7 +111,10 @@ func New(deps Deps) *Module {
 	referenceRegistry := references.MustNew(deps.ReferenceResolvers...)
 
 	svc := app.NewService(repos, txm, client, deps.Sealer, registry, referenceRegistry, deps.Logger,
-		app.WithPromptCache(!deps.DisablePromptCache))
+		app.WithPromptCache(!deps.DisablePromptCache),
+		// Nil is a build that counts nothing and answers identically. See
+		// ports.TurnMetrics.
+		app.WithTurnMetrics(deps.TurnMetrics))
 	h := httpapi.NewHandler(svc, deps.Logger)
 	return &Module{deps: deps, handler: h}
 }

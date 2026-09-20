@@ -68,6 +68,30 @@ const (
 	FinishToolRoundLimit FinishReason = "tool_round_limit"
 )
 
+// TerminalLabel reduces a finish reason to the CLOSED vocabulary that may
+// be carried as a metric label.
+//
+// ── Why a reduction and not the value itself ───────────────────────────
+// Because FinishReason is not a closed type on the wire. The provider's own
+// reason is copied straight from the gateway's `finish_reason` field, and a
+// gateway is free to send `content_filter`, `max_tokens`, a vendor-specific
+// string, or something nobody has seen yet. A metric labelled with that is
+// an unbounded label set: one new gateway value is one new time series,
+// forever, on a counter that is incremented once per turn.
+//
+// So the seven values this product actually reasons about pass through and
+// everything else becomes `other`. A vocabulary that grows needs an edit
+// here, which is the point.
+func (r FinishReason) TerminalLabel() string {
+	switch r {
+	case FinishStop, FinishLength, FinishAborted, FinishDeadline,
+		FinishError, FinishToolRoundLimit, FinishToolCalls:
+		return string(r)
+	default:
+		return "other"
+	}
+}
+
 // UsageSource says how much a turn's token counts can be trusted.
 //
 // It exists because a token count of zero is ambiguous on its own, and the

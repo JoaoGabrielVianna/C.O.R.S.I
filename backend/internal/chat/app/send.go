@@ -794,6 +794,7 @@ func (s *Service) runTurn(ctx context.Context, in runTurnInput, sink TurnSink) r
 		Content:     reply.String(),
 		Reasoning:   reasoning.String(),
 		ReasoningMS: reasoningMS,
+		DurationMS:  int(time.Since(streamStart).Milliseconds()),
 		Finish:      finish,
 		ErrText:     errText,
 		Price:       in.Gate.price,
@@ -1092,8 +1093,13 @@ type assistantTurn struct {
 	Content     string
 	Reasoning   string
 	ReasoningMS int
-	Finish      domain.FinishReason
-	ErrText     string
+	// DurationMS is how long the whole turn took, first request out to last
+	// token in. Not persisted on the message: it exists so the terminal
+	// event can report it, which is the number that made a 30-second
+	// deadline recognisable the moment somebody finally looked.
+	DurationMS int
+	Finish     domain.FinishReason
+	ErrText    string
 	// Price is the rate card the budget preflight already fetched, when it
 	// ran. Reusing it is what keeps a budgeted agent at one rate-card call
 	// per turn instead of two. Nil means nobody has looked yet.
@@ -1182,13 +1188,92 @@ func (s *Service) persistAssistant(
 
 	if err := s.repos.Messages.Create(writeCtx, msg); err != nil {
 		s.log.Error("persist assistant message", "conversation_id", conv.ID, "err", err)
+		// Counted anyway, and as what it was. A turn whose write-back failed
+		// still ended for a reason, and the one thing worse than a failure is
+		// a failure that is also invisible.
+		s.recordTerminal(conv, nil, turn, acct.Source)
 		return nil
 	}
 	s.persistToolCalls(writeCtx, conv, msg, turn.tools)
 	if err := s.repos.Conversations.TouchActivity(writeCtx, conv.WorkspaceID, conv.ID); err != nil {
 		s.log.Warn("touch conversation activity", "conversation_id", conv.ID, "err", err)
 	}
+	s.recordTerminal(conv, msg, turn, acct.Source)
 	return msg
+}
+
+// recordTerminal emits the one event that says how a turn ended.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	SAFE METADATA ONLY — NO PROMPT, NO ANSWER, NO TOOL PAYLOAD
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// ── Why it exists ──────────────────────────────────────────────────────
+// R1 asked the running system why a turn had been interrupted and had to
+// answer by reading source and joining three tables by hand. Fourteen turns
+// had been killed by a router deadline over two weeks, across three agents,
+// and the only trace was an access-log line reporting `status=200` and
+// `duration_ms=30001` — a status that was true of the stream's first byte
+// and false of everything after it.
+//
+// ── What it may carry, and the rule that keeps it that way ─────────────
+// Identifiers, counts, a duration, and two enum values. Nothing here is
+// text a person or a model wrote: not the question, not the answer, not a
+// tool's arguments or its result, and not a capability's payload. The
+// Palace capabilities are Confidential and their payloads are not even kept
+// in the audit row; an event that re-derived them from the turn would be
+// the leak that redaction exists to prevent.
+//
+// `tool_names` is deliberately ABSENT too. It would be bounded and
+// non-confidential, and it would also be the first step of the slide.
+func (s *Service) recordTerminal(conv *domain.Conversation, msg *domain.Message, turn assistantTurn, usage domain.UsageSource) {
+	var executed, failed, notExecuted int
+	for _, c := range turn.tools {
+		switch c.Outcome.Status {
+		case domain.ToolCallOK:
+			executed++
+		case domain.ToolCallError:
+			failed++
+		case domain.ToolCallNotExecuted:
+			notExecuted++
+		}
+	}
+	// A round that EXECUTED something. The refusals the ceiling records are
+	// in `turn.tools` and never in a round's list, so this counts rounds
+	// that ran rather than rounds that were asked for.
+	execRounds := 0
+	for _, r := range turn.rounds {
+		if len(r.Tools) > 0 {
+			execRounds++
+		}
+	}
+
+	messageID := "none"
+	if msg != nil {
+		messageID = msg.ID.String()
+	}
+	s.log.Info("turn terminal",
+		"conversation_id", conv.ID,
+		"message_id", messageID,
+		"terminal_reason", turn.Finish.TerminalLabel(),
+		"provider_calls", len(turn.rounds),
+		"execution_rounds", execRounds,
+		"tools_requested", len(turn.tools),
+		"tools_executed", executed,
+		"tools_failed", failed,
+		"tools_not_executed", notExecuted,
+		"duration_ms", turn.DurationMS,
+		"usage_source", usage,
+		"persisted", msg != nil)
+
+	if s.metrics != nil {
+		// The closed vocabulary, not the raw value: a gateway is free to
+		// invent finish reasons and a metric label is not free to grow. See
+		// domain.FinishReason.TerminalLabel.
+		s.metrics.TurnTerminal(turn.Finish.TerminalLabel())
+	}
 }
 
 // persistToolCalls files the turn's audit rows under the message they belong

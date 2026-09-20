@@ -39,7 +39,11 @@ type Service struct {
 	// promptCache says whether a turn asks the provider to cache the stable
 	// head of its prompt. See WithPromptCache.
 	promptCache bool
-	log         *slog.Logger
+	// metrics counts how turns end. Nil in every build that does not wire
+	// one, which includes every test harness: a turn behaves identically
+	// whether or not anybody is counting. See ports.TurnMetrics.
+	metrics ports.TurnMetrics
+	log     *slog.Logger
 }
 
 // NewService wires the application layer.
@@ -98,6 +102,16 @@ type ServiceOption func(*Service)
 // TestUnmarkedContentIsAByteIdenticalString.
 func WithPromptCache(enabled bool) ServiceOption {
 	return func(s *Service) { s.promptCache = enabled }
+}
+
+// WithTurnMetrics wires the counter that records how turns end.
+//
+// Optional, and optional in the strong sense: nothing about a turn changes
+// when it is absent, and recordTerminal still writes its structured log. A
+// deployment without Prometheus keeps the diagnosis, and loses only the
+// aggregate.
+func WithTurnMetrics(m ports.TurnMetrics) ServiceOption {
+	return func(s *Service) { s.metrics = m }
 }
 
 // credentialsFor unseals a provider's stored key for one outbound call.

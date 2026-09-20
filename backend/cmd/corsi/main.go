@@ -303,6 +303,9 @@ func run() error {
 		// The kill switch on an external boundary. Default off, so the
 		// default behaviour is to cache — see config.Modules.
 		DisablePromptCache: cfg.Modules.ChatDisablePromptCache,
+		// How turns end, by terminal reason, on the registry every other
+		// family already hangs off. See metrics.Registry.Chat.
+		TurnMetrics: reg.Chat(),
 	})
 	chatMod.Register(router)
 
