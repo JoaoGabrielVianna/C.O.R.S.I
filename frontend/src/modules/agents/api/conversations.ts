@@ -21,8 +21,25 @@ export type MessageRole = "user" | "assistant";
  * run tools more times than one turn may, and the backend stopped the loop.
  * `tool_calls` is never stored — it is a mid-turn state the loop consumes —
  * so it does not appear here.
+ *
+ * `aborted` and `deadline` are the two ways a turn can be STOPPED, and they
+ * are different facts about different actors:
+ *
+ *   aborted   somebody stopped it — the user pressed stop, the tab closed
+ *   deadline  something stopped it — a clock expired while it was working
+ *
+ * They were one value until R2, and the interface said "Resposta
+ * interrompida." to people who had interrupted nothing: a 30-second router
+ * deadline was killing turns that were answering normally. Only `deadline`
+ * offers to continue; a turn somebody stopped on purpose does not argue.
  */
-export type FinishReason = "stop" | "length" | "aborted" | "error" | "tool_round_limit";
+export type FinishReason =
+  | "stop"
+  | "length"
+  | "aborted"
+  | "deadline"
+  | "error"
+  | "tool_round_limit";
 
 export interface ApiConversation {
   id: string;

@@ -799,6 +799,7 @@ export const en: Translations = {
           cancel: "Cancel",
           resend: "Resend",
           interrupted: "Reply interrupted.",
+          unfinished: "This reply did not finish.",
           truncated: "Reply cut off at the agent's token ceiling.",
           saveToMemory: "Save to memory",
           editAndResend: "Edit and resend",
@@ -821,6 +822,7 @@ export const en: Translations = {
           referenceGone: "is no longer available",
           copyCode: "Copy code",
           interrupted: "This turn stopped part way, after it had already done some of the work.",
+          unfinished: "This reply did not finish. It can be continued from where it stopped.",
           continueTurn: "Continue",
         },
         toolActivity: {

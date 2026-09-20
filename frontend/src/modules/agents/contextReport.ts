@@ -301,6 +301,7 @@ const TOOL_ERROR_LABEL: Record<string, string> = {
   tool_execution_failed: "falhou",
   tool_timeout: "tempo esgotado",
   tool_round_limit: "limite de rodadas",
+  tool_turn_stopped: "turno encerrado",
 };
 
 /**

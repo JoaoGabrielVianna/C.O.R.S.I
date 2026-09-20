@@ -808,6 +808,7 @@ export const pt = {
           cancel: "Cancelar",
           resend: "Reenviar",
           interrupted: "Resposta interrompida.",
+          unfinished: "A resposta não chegou ao fim.",
           truncated: "Resposta cortada no limite de tokens do agente.",
           saveToMemory: "Salvar na memória",
           editAndResend: "Editar e reenviar",
@@ -830,6 +831,7 @@ export const pt = {
           referenceGone: "não está mais disponível",
           copyCode: "Copiar código",
           interrupted: "Este turno parou no meio, depois de já ter feito parte do trabalho.",
+          unfinished: "A resposta não terminou. Dá para continuar de onde parou.",
           continueTurn: "Continuar",
         },
         toolActivity: {

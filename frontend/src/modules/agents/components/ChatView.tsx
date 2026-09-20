@@ -210,9 +210,16 @@ export function ChatView({
   const resumable = useMemo(() => {
     const last = messages[messages.length - 1];
     if (!last || last.role !== "assistant") return null;
-    // Only the ceiling, matching the server. Anything else it refuses, and
-    // an affordance that offers a refusal is worse than none.
-    return last.finish_reason === "tool_round_limit" ? last : null;
+    // Matching the server's ResumableFinish exactly. Anything else it
+    // refuses, and an affordance that offers a refusal is worse than none.
+    //
+    // `deadline` joined the ceiling in R2. It is the turn nobody stopped:
+    // a clock ended it while it was working, which is how the operator
+    // ended up typing "Resposta interrompida. continue" into the composer
+    // — the one route this banner exists to replace.
+    if (last.finish_reason === "tool_round_limit") return last;
+    if (last.finish_reason === "deadline") return last;
+    return null;
   }, [messages]);
 
   /**
@@ -612,7 +619,13 @@ export function ChatView({
           <div className="mb-2 flex items-start gap-2 rounded-xl border border-(--color-border) bg-(--color-muted)/40 px-3 py-2.5">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-(--color-muted-foreground)" />
             <p className="flex-1 text-[11.5px] leading-relaxed text-(--color-muted-foreground)">
-              {t.app.modules.agents.chat.interrupted}
+              {/* Two reasons reach this banner and they are not the same
+                  news. The ceiling means the turn ran out of steps; a
+                  deadline means it never got to finish. Neither sentence
+                  names a middleware, a context or a status code. */}
+              {resumable.finish_reason === "deadline"
+                ? t.app.modules.agents.chat.unfinished
+                : t.app.modules.agents.chat.interrupted}
             </p>
             <Button
               size="sm"

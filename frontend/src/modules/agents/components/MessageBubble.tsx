@@ -260,7 +260,14 @@ export function AssistantMessage({
   const { copied, copy } = useCopy(content);
 
   const failed = Boolean(message?.error);
+  /** Somebody stopped it. No recovery is offered: they asked for this. */
   const aborted = message?.finish_reason === "aborted";
+  /**
+   * Something stopped it. A different sentence, because attributing it to
+   * the reader is what the interface did wrong for two weeks — and the
+   * Continue affordance lives in the composer, not here.
+   */
+  const unfinished = message?.finish_reason === "deadline";
   const truncated = message?.finish_reason === "length";
   const hasReasoning = Boolean(reasoning?.trim());
 
@@ -346,6 +353,7 @@ export function AssistantMessage({
       ) : null}
 
       {aborted ? <Notice>{t.app.modules.agents.message.interrupted}</Notice> : null}
+      {unfinished ? <Notice>{t.app.modules.agents.message.unfinished}</Notice> : null}
       {truncated ? <Notice>{t.app.modules.agents.message.truncated}</Notice> : null}
       {failed ? (
         <div className="mt-2 flex items-start gap-2 rounded-xl border border-(--color-destructive)/30 bg-(--color-destructive)/5 px-3 py-2">
