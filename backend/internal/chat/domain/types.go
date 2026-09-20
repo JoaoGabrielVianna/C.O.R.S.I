@@ -19,15 +19,45 @@ func (r Role) Valid() bool {
 }
 
 // FinishReason records why a streamed completion stopped. `stop` and
-// `length` come from the provider; `aborted` and `error` are ours, for a
-// stream that died before the provider said anything conclusive.
+// `length` come from the provider; the rest are ours, for a stream that
+// died before the provider said anything conclusive.
 type FinishReason string
 
 const (
-	FinishStop    FinishReason = "stop"
-	FinishLength  FinishReason = "length"
+	FinishStop   FinishReason = "stop"
+	FinishLength FinishReason = "length"
+	// FinishAborted is SOMEBODY stopping the turn: the user pressed stop,
+	// the tab closed, the connection went away. The runtime cannot tell
+	// those apart and does not try — from the turn's side they are one
+	// fact, that the reader is gone.
+	//
+	// It is deliberately NOT resumable. A turn nobody is waiting for should
+	// not offer to finish itself, and the user who stopped it asked for the
+	// opposite. See app.ResumableFinish.
 	FinishAborted FinishReason = "aborted"
-	FinishError   FinishReason = "error"
+	// FinishDeadline is a CLOCK stopping the turn: some deadline on the
+	// request's context expired while the turn was still working.
+	//
+	// ── Why it is its own reason ───────────────────────────────────
+	// Because for most of this product's life it was recorded as
+	// `aborted`, and that is a statement about the user. R1 found 14 turns
+	// in the live database that a 30-second router deadline killed while
+	// they were answering normally; every one of them was filed as though
+	// a person had changed their mind, and the interface said so. The
+	// runtime has `context.DeadlineExceeded` in its hand at the moment it
+	// decides, and throwing it away was the whole defect.
+	//
+	// ── It should be rare, and must still be right ─────────────────
+	// The streaming turn routes no longer inherit the generic request
+	// deadline (see httpserver.WithoutRequestDeadline), so nothing in the
+	// ordinary path produces this any more. That is the point: it is the
+	// label for a failure that should not happen, kept so that the failure
+	// cannot come back wearing somebody else's name.
+	//
+	// Unlike FinishAborted it IS resumable: nobody chose it, the work may
+	// be half done, and the turn is worth finishing.
+	FinishDeadline FinishReason = "deadline"
+	FinishError    FinishReason = "error"
 	// FinishToolCalls is the provider's own reason for stopping to ask for a
 	// tool. It is a mid-turn state, never a stored one: the loop reads it,
 	// runs the tools and calls the provider again, so a turn that ends this

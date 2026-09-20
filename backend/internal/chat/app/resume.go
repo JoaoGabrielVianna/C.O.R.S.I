@@ -53,20 +53,37 @@ import (
 
 // ResumableFinish is the set of terminal reasons a turn may be resumed from.
 //
-// ── Why the ceiling and not every failure ──────────────────────────────
+// ── Why the ceiling ────────────────────────────────────────────────────
 // Because the ceiling is the one terminal that is guaranteed to have left
 // work both DONE and PENDING, by construction: it only fires after at least
 // one round has executed, and it fires precisely because the model asked
 // for more. That is the shape a resume is for.
 //
-// The others are deliberately excluded for now, and each for its own
-// reason. An aborted turn stopped because the user wanted it stopped. A
-// gateway failure may have left the model mid-thought about work it never
+// ── Why the deadline joined it ─────────────────────────────────────────
+// This set said `tool_round_limit` and nothing else, and the sentence that
+// excluded everything else read: "an aborted turn stopped because the user
+// wanted it stopped." That premise was true of the value and false of the
+// turns wearing it. R1 measured 18 turns recorded as `aborted` in the live
+// database and found 14 of them were a 30-second router deadline killing a
+// turn that was working — one of them three writes deep, whose operator
+// then typed "Resposta interrompida. continue" into the composer, which is
+// the exact route this file exists to remove.
+//
+// So the fix is not to widen `aborted`. It is that a deadline is not an
+// abort, and now says so: see domain.FinishDeadline. Nobody chose it, the
+// work may be half done, and everything a safe continuation needs —
+// receipt, effect refs, the original question — was already being persisted
+// on that path.
+//
+// ── What stays out, and why each ───────────────────────────────────────
+// `aborted` stays out and must: it is a person or a closed tab, and a turn
+// nobody is waiting for should not offer to finish itself. A gateway
+// failure may have left the model mid-thought about work it never
 // described. A budget refusal is a limit doing its job, and resuming past
-// it would walk around the thing the user set. Widening this set is a
-// decision, not a convenience.
+// it would walk around the thing the user set. Widening this set further is
+// a decision, not a convenience.
 func ResumableFinish(reason domain.FinishReason) bool {
-	return reason == domain.FinishToolRoundLimit
+	return reason == domain.FinishToolRoundLimit || reason == domain.FinishDeadline
 }
 
 // ResumeContext is what the continuing turn is told about the attempt it

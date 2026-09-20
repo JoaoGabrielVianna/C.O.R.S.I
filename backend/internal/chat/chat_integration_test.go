@@ -54,6 +54,7 @@ import (
 	"github.com/corsi/backend/internal/chat/app"
 	"github.com/corsi/backend/internal/chat/domain"
 	"github.com/corsi/backend/internal/chat/ports"
+	"github.com/corsi/backend/internal/platform/httpserver"
 	"github.com/corsi/backend/internal/platform/postgres"
 	"github.com/corsi/backend/internal/platform/secrets"
 	"github.com/corsi/backend/internal/platform/testdb"
@@ -148,6 +149,11 @@ type envConfig struct {
 	// extraTools go through tools.Options.Extra, the seam a host binary
 	// supplies real capabilities through. Empty by default.
 	extraTools []ports.Tool
+	// routerTimeout, when non-zero, builds the root router with the
+	// production middleware stack and this generic request deadline. Zero
+	// keeps the bare router the suite has always used. See
+	// withProductionRouter.
+	routerTimeout time.Duration
 	// referenceResolvers arrive through the same seam a host binary uses
 	// for them. Empty by default, which is a build that can resolve no
 	// subjects — and the shape every deployment had before they existed.
@@ -191,6 +197,23 @@ func withExtraTools(extra ...ports.Tool) envOption {
 // TestKillSwitchRestoresThePreCachingRequestBody.
 func withPromptCacheDisabled() envOption {
 	return func(c *envConfig) { c.promptCache = false }
+}
+
+// withProductionRouter builds the root router the way cmd/corsi does,
+// instead of the bare chi.NewRouter this suite has always used.
+//
+// ── Why this option had to exist ───────────────────────────────────────
+// R1 found that the entire chat integration suite mounted a naked router,
+// so the production middleware stack — request id, access log, recovery
+// and, decisively, the generic request deadline — was never exercised by a
+// single test. A 30-second deadline killed 14 real turns over two weeks and
+// no test could have caught it, because no test ran under it.
+//
+// The timeout is a parameter so a regression can prove a stream outlives
+// the deadline without waiting thirty seconds for it. Everything else about
+// the composition is production's: see httpserver.NewRouterWithTimeout.
+func withProductionRouter(timeout time.Duration) envOption {
+	return func(c *envConfig) { c.routerTimeout = timeout }
 }
 
 // withReferenceResolvers supplies entity resolvers the same way the
@@ -267,7 +290,13 @@ func newEnvOn(t *testing.T, d string, opts ...envOption) *env {
 		app.WithPromptCache(cfg.promptCache))
 	h := httpapi.NewHandler(svc, log)
 
+	// The bare router the suite has always used, or the production stack
+	// when a test needs the middleware that killed 14 real turns to be in
+	// the chain. See withProductionRouter.
 	root := chi.NewRouter()
+	if cfg.routerTimeout > 0 {
+		root = httpserver.NewRouterWithTimeout(log, cfg.routerTimeout)
+	}
 	root.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			id, err := uuid.Parse(req.Header.Get("X-Test-Workspace-Id"))

@@ -522,14 +522,16 @@ type ToolOutput map[string]any
 
 // ToolErrorCode names why a tool call did not produce a result.
 //
-// Five of the six are RECOVERABLE: they are handed back to the model as the
-// content of a `tool` message, so it can apologise, correct itself, or try
-// a different call. That is the whole reason they are distinguishable — a
-// model told "error" learns nothing, a model told "unknown argument path"
+// Five of the seven are RECOVERABLE: they are handed back to the model as
+// the content of a `tool` message, so it can apologise, correct itself, or
+// try a different call. That is the whole reason they are distinguishable —
+// a model told "error" learns nothing, a model told "unknown argument path"
 // can fix it.
 //
-// The sixth, ToolErrRoundLimit, is not a tool error at all: it is this
-// system stopping the loop, and it ends the turn. See app/send.go.
+// The other two are not tool errors at all: ToolErrRoundLimit is this
+// system stopping the loop, and ToolErrTurnStopped is the turn's context
+// ending underneath calls that had been asked for. Both end the turn. See
+// app/send.go.
 type ToolErrorCode string
 
 const (
@@ -550,10 +552,29 @@ const (
 	// to the turn, and deliberately not recoverable: handing this back to
 	// the model would invite exactly the loop it exists to stop.
 	ToolErrRoundLimit ToolErrorCode = "tool_round_limit"
+	// ToolErrTurnStopped: the turn's context ended — a clock or a reader
+	// going away — while calls the model had asked for were still waiting
+	// to run.
+	//
+	// NO REQUESTED TOOL DISAPPEARS SILENTLY, and this is the second place
+	// that could have let one. The ceiling has recorded its refusals since
+	// the receipt existed; this path did not, because nothing read that
+	// record: a stopped turn could not be continued, so the fact that its
+	// pending work was missing was invisible. Making the infrastructure
+	// deadline resumable is what made it matter — a continuation is told
+	// what is still pending, and "nothing is pending" would have been a
+	// lie told to a model that is about to act on it.
+	//
+	// Not recoverable, for the same reason the ceiling is not: the turn is
+	// over, and handing this to the model would invite it to try again
+	// inside a turn that has already ended.
+	ToolErrTurnStopped ToolErrorCode = "tool_turn_stopped"
 )
 
 // Recoverable reports whether the model gets to see this and carry on.
-func (c ToolErrorCode) Recoverable() bool { return c != ToolErrRoundLimit }
+func (c ToolErrorCode) Recoverable() bool {
+	return c != ToolErrRoundLimit && c != ToolErrTurnStopped
+}
 
 // ToolFailure is a tool call that did not succeed, in the form both the
 // audit trail and the model receive.

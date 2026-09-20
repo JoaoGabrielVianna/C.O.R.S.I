@@ -623,8 +623,11 @@ func (s *Service) runTurn(ctx context.Context, in runTurnInput, sink TurnSink) r
 			finish, errText, result.err = domain.FinishError, call.recvErr.Error(), call.recvErr
 			break
 		}
-		if call.aborted {
-			finish, errText = domain.FinishAborted, ""
+		if call.stopped != nil {
+			// A clock or a person. Either way the turn is over and nothing
+			// failed, so no error text is recorded — but WHICH of the two it
+			// was decides whether the product may offer to finish the work.
+			finish, errText = terminalFor(call.stopped), ""
 			break
 		}
 
@@ -636,6 +639,13 @@ func (s *Service) runTurn(ctx context.Context, in runTurnInput, sink TurnSink) r
 			if finish == domain.FinishToolCalls {
 				s.log.Warn("provider reported tool_calls with no calls",
 					"conversation_id", in.Conversation.ID)
+				finish = domain.FinishStop
+			}
+			if finish == "" {
+				// The stream drained without the gateway naming a reason.
+				// The TURN did end normally and `stop` is the honest thing
+				// to tell a reader; what must not be invented is the
+				// PROVIDER's own claim, and that stays absent on the round.
 				finish = domain.FinishStop
 			}
 			break
@@ -681,29 +691,30 @@ func (s *Service) runTurn(ctx context.Context, in runTurnInput, sink TurnSink) r
 			// The sink is told too, with the same terminal frame shape a
 			// refused call already produces, so a live client renders the
 			// stopped request instead of watching it vanish.
-			for _, tc := range call.toolCalls {
-				refusal := domain.ToolError(domain.ToolErrRoundLimit, errText)
-				records = append(records, pendingToolCall{
-					Round: round,
-					Outcome: toolOutcome{
-						Call:    tc,
-						Content: encodeToolFailure(refusal),
-						Status:  domain.ToolCallNotExecuted,
-						Failure: refusal,
-					},
-				})
-				_ = sink.Tool(ToolEvent{
-					CallID:    tc.ID,
-					Name:      tc.Name.String(),
-					Status:    string(domain.ToolCallNotExecuted),
-					ErrorCode: string(domain.ToolErrRoundLimit),
-				})
-			}
+			records = append(records,
+				refuseRequestedCalls(sink, round, call.toolCalls,
+					domain.ToolErrRoundLimit, errText)...)
 			break
 		}
-		// A user who pressed stop gets no new round, and no tool runs.
+		// A turn whose context is already gone gets no new round, and no
+		// tool runs. Named by the same rule as the mid-stream stop above,
+		// so the two places that can end a turn this way cannot disagree
+		// about what to call it.
 		if ctx.Err() != nil {
-			finish, errText = domain.FinishAborted, ""
+			finish, errText = terminalFor(stoppedBy(ctx)), ""
+			// ── And the same rule about what was asked for ──────
+			//
+			// NO REQUESTED TOOL DISAPPEARS SILENTLY applies here too.
+			// The model asked for these and the turn ended underneath
+			// them; recording nothing would leave a continuation being
+			// told that nothing is pending, which is a lie it would act
+			// on. See domain.ToolErrTurnStopped.
+			records = append(records,
+				refuseRequestedCalls(sink, round, call.toolCalls,
+					domain.ToolErrTurnStopped, "the turn ended before this call could run")...)
+			s.log.Info("turn stopped with calls pending",
+				"conversation_id", in.Conversation.ID, "round", round,
+				"pending_calls", len(call.toolCalls), "terminal_reason", finish)
 			break
 		}
 
@@ -801,15 +812,114 @@ const roleTool = "tool"
 
 // callResult is what one provider call produced.
 type callResult struct {
-	opened    bool
-	openErr   error
-	recvErr   error
-	aborted   bool
+	opened  bool
+	openErr error
+	recvErr error
+	// stopped is the context error that ended this call, or nil.
+	//
+	// It holds the ERROR rather than a bool because the two values it can
+	// carry mean opposite things and were collapsed for most of this
+	// module's life: `context.Canceled` is a person, `context.DeadlineExceeded`
+	// is a clock. See terminalFor.
+	stopped   error
 	content   string
 	reasoning string
+	// finish is what the PROVIDER said, and is empty when it said nothing.
+	//
+	// It used to be initialised to FinishStop the moment the stream opened,
+	// which meant a call cut off mid-answer was recorded as having returned
+	// `stop`. R1 found exactly that on the incident's second round: a turn
+	// killed by a deadline whose per-round report claimed a clean finish.
+	// Absence is now absence — see ContextRound.FinishReason, which omits it.
 	finish    domain.FinishReason
 	usage     *ports.Usage
 	toolCalls []domain.ToolCall
+}
+
+// refuseRequestedCalls records calls the model asked for and the runtime
+// will not run, and tells the reader about them.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	NO REQUESTED TOOL DISAPPEARS SILENTLY
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// Nothing is executed and nothing is fabricated: there is no Result because
+// there was no result, and the duration is zero because nothing ran.
+// NewWriteReceipt maps NOT_EXECUTED to WriteNotExecuted and counts it under
+// Refused, so Executed keeps meaning what it has always meant.
+//
+// Shared by the two places that stop a turn holding requested calls — the
+// ceiling and a context that ended — because a second copy of it is exactly
+// where one of them would quietly stop recording.
+func refuseRequestedCalls(
+	sink TurnSink,
+	round int,
+	calls []domain.ToolCall,
+	code domain.ToolErrorCode,
+	reason string,
+) []pendingToolCall {
+	out := make([]pendingToolCall, 0, len(calls))
+	for _, tc := range calls {
+		refusal := domain.ToolError(code, reason)
+		out = append(out, pendingToolCall{
+			Round: round,
+			Outcome: toolOutcome{
+				Call:    tc,
+				Content: encodeToolFailure(refusal),
+				Status:  domain.ToolCallNotExecuted,
+				Failure: refusal,
+			},
+		})
+		// The same terminal frame shape a refused call already produces, so
+		// a live client renders the stopped request instead of watching it
+		// vanish.
+		_ = sink.Tool(ToolEvent{
+			CallID:    tc.ID,
+			Name:      tc.Name.String(),
+			Status:    string(domain.ToolCallNotExecuted),
+			ErrorCode: string(code),
+		})
+	}
+	return out
+}
+
+// stoppedBy answers what ended a turn whose context is gone.
+//
+// ── Why the CAUSE and not the error ────────────────────────────────────
+// Because `ctx.Err()` flattens. A context cancelled by a parent's deadline
+// reports `context.Canceled` once anything in the chain used WithCancel,
+// and the streaming routes do exactly that: WithoutRequestDeadline
+// re-sources cancellation so a turn does not inherit the generic request
+// deadline. Reading Err() there would report every stop as a person, which
+// is the defect R1 measured, reintroduced by the fix for it.
+//
+// `context.Cause` survives that chain, because WithoutRequestDeadline
+// cancels WITH the original error as the cause. On a plain WithTimeout
+// context it answers `context.DeadlineExceeded` just the same.
+//
+// A live context with a failed sink write is nobody's deadline: the
+// connection broke, so whoever was reading is not reading any more.
+func stoppedBy(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	return context.Canceled
+}
+
+// terminalFor names what stopped a turn, from the context error that ended
+// it.
+//
+// The distinction is available at exactly this point and nowhere later: by
+// the time a row is written, a cancelled request and an expired deadline
+// look identical. Anything that is not a deadline is somebody going away,
+// which is what `aborted` has always meant.
+func terminalFor(err error) domain.FinishReason {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return domain.FinishDeadline
+	}
+	return domain.FinishAborted
 }
 
 // streamOneCall runs exactly one completion, forwarding what it produces to
@@ -858,7 +968,9 @@ func (s *Service) streamOneCall(
 	}
 	defer func() { _ = stream.Close() }()
 	out.opened = true
-	out.finish = domain.FinishStop
+	// out.finish stays EMPTY until the gateway names a reason. See
+	// callResult.finish: a call that is cut off must not be recorded as
+	// having returned `stop`.
 
 	var callContent, callReasoning strings.Builder
 
@@ -868,10 +980,10 @@ func (s *Service) streamOneCall(
 			break
 		}
 		if recvErr != nil {
-			// A cancelled request surfaces here as a read error. That is an
-			// abort, not a provider fault, and should not be reported as one.
+			// A cancelled request surfaces here as a read error. That is a
+			// stop, not a provider fault, and should not be reported as one.
 			if ctx.Err() != nil {
-				out.aborted = true
+				out.stopped = stoppedBy(ctx)
 			} else {
 				out.recvErr = recvErr
 			}
@@ -892,7 +1004,7 @@ func (s *Service) streamOneCall(
 			callReasoning.WriteString(ev.Reasoning)
 			reasoning.WriteString(ev.Reasoning)
 			if err := sink.Reasoning(ev.Reasoning); err != nil {
-				out.aborted = true
+				out.stopped = stoppedBy(ctx)
 				break
 			}
 		}
@@ -909,7 +1021,7 @@ func (s *Service) streamOneCall(
 		reply.WriteString(ev.Delta)
 		if err := sink.Delta(ev.Delta); err != nil {
 			// The reader is gone. Stop pulling tokens we are paying for.
-			out.aborted = true
+			out.stopped = stoppedBy(ctx)
 			break
 		}
 	}

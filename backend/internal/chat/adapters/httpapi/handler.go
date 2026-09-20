@@ -24,6 +24,7 @@ import (
 	"github.com/corsi/backend/internal/chat/app"
 	"github.com/corsi/backend/internal/chat/domain"
 	"github.com/corsi/backend/internal/platform/apierror"
+	"github.com/corsi/backend/internal/platform/httpserver"
 	"github.com/corsi/backend/internal/platform/render"
 	"github.com/corsi/backend/internal/platform/workspace"
 )
@@ -110,13 +111,30 @@ func (h *Handler) Mount(r chi.Router) {
 		// transcript already knows from the turn's report whether there is
 		// anything to fetch.
 		r.Get("/{id}/tool-calls", h.listConversationToolCalls)
+		// ── The two routes that hold a connection open ──────────────
+		//
+		// LONG-LIVED CHAT STREAMS MUST NOT INHERIT THE GENERIC REQUEST
+		// DEADLINE.
+		//
+		// A turn is not a request/response: it streams for as long as the
+		// model takes, and with tools it makes several provider calls in
+		// one connection. Under the router's generic 30-second deadline
+		// that is a clock racing a model, and R1 measured which one won —
+		// 14 working turns killed, recorded as `aborted`, indistinguishable
+		// from a user pressing stop.
+		//
+		// The opt-out is stated HERE, on the two routes it is true of,
+		// rather than as a path list inside the platform package. Client
+		// disconnect still cancels; only the arbitrary clock is gone. See
+		// httpserver.WithoutRequestDeadline.
+		streams := r.With(httpserver.WithoutRequestDeadline)
 		// Streams the reply as Server-Sent Events rather than returning a
 		// document. See sendMessage in stream.go.
-		r.Post("/{id}/messages", h.sendMessage)
+		streams.Post("/{id}/messages", h.sendMessage)
 		// Continue a turn that stopped with work already done. Not a
 		// message: it adds no question, it finishes answering the one
 		// already there. See resumeMessage in stream.go.
-		r.Post("/{id}/resume", h.resumeMessage)
+		streams.Post("/{id}/resume", h.resumeMessage)
 		// Reads this thread as it stands and proposes what is worth
 		// remembering. A POST because it spends money and writes a receipt,
 		// and a sub-resource of the conversation because the conversation is
