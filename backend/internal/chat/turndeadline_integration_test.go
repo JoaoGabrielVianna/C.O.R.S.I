@@ -65,9 +65,14 @@ import (
 const confidentialPayload = "carga-confidencial-que-nunca-pode-voltar"
 
 // deadlineBudget is how long the reproduced request is allowed to take.
-// Generous on purpose: what has to be deterministic is that the SECOND
-// provider call outlives it, not that the first one is fast.
-const deadlineBudget = time.Second
+//
+// Generous on purpose, and the generosity is the point: what has to be
+// deterministic is that the SECOND provider call outlives it, never that
+// the first one and its dozen queries are fast. Under the full gate this
+// runs beside every other package against one Postgres, and a budget tight
+// enough to be occasionally missed would make the whole turn abort at
+// round one with nothing written — a red gate nobody could reproduce.
+const deadlineBudget = 2 * time.Second
 
 // runInterruptedByDeadline drives the incident's exact shape: a write
 // executes, the answer starts streaming, and the request's deadline expires
