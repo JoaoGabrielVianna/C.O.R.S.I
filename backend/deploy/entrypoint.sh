@@ -62,6 +62,17 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
   # See the header of migrations/palace/0001_init.up.sql.
   "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/palace" -table schema_migrations_palace up \
     || { echo "entrypoint: palace migrations failed" >&2; exit 1; }
+
+  # The Telegram INTEGRATION. Routing state only: which Telegram chat may
+  # speak to which workspace, and which conversation carries which agent.
+  # No transcript lives in this schema — those are chat.messages.
+  #
+  # Applied unconditionally, including on a deployment with no
+  # TELEGRAM_BOT_TOKEN. The schema costs four empty tables and its absence
+  # would make enabling the integration a migration the operator has to
+  # remember, which is the failure mode this whole stage exists to remove.
+  "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/telegram" -table schema_migrations_telegram up \
+    || { echo "entrypoint: telegram migrations failed" >&2; exit 1; }
 fi
 
 echo "entrypoint: starting corsi on ${HTTP_ADDR}"

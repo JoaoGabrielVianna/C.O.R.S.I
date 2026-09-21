@@ -13,6 +13,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 
@@ -120,6 +121,40 @@ type Modules struct {
 	// default that looks right is worse than an obvious one, and every
 	// existing row in this database was cut in it.
 	FinanceTimezone string `env:"FINANCE_TIMEZONE" envDefault:"America/Sao_Paulo"`
+
+	// TelegramBotToken is the bot credential, from BotFather.
+	//
+	// ── Empty is the OFF switch, and that is the whole switch ──────────
+	// There is no TELEGRAM_ENABLED. A second variable would create four
+	// states out of two facts, and two of them are nonsense: "enabled with
+	// no token" is a bot that answers nobody, and "disabled with a token"
+	// is a secret in an environment for no reason. So the presence of the
+	// secret IS the decision, which also makes "turn it off" and "remove
+	// the credential" the same action.
+	//
+	// With it empty the composition root constructs no Telegram module,
+	// starts no poller, and makes no outbound connection. The rest of
+	// C.O.R.S.I. runs exactly as it does today — asserted in the
+	// integration suite, not assumed.
+	//
+	// ── What must never happen to this value ───────────────────────────
+	// It is not persisted, not logged, not returned by any route, not
+	// exposed to the frontend, and not put in an error: the Bot API
+	// carries it in the URL PATH, so a dial failure's error text contains
+	// it unless something removes it. See botapi.scrub.
+	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN"`
+
+	// TelegramTurnTimeout bounds one turn started from Telegram.
+	//
+	// The streaming HTTP routes deliberately have no deadline — a turn
+	// lives as long as the reader's connection. Telegram has no connection
+	// to close, so without a bound here a gateway that never answers would
+	// hold that chat's single turn slot until the process restarts.
+	//
+	// Zero means the application default. See app.DefaultTurnTimeout for
+	// why it is five minutes and how it composes with the resumable
+	// `deadline` terminal.
+	TelegramTurnTimeout time.Duration `env:"TELEGRAM_TURN_TIMEOUT"`
 }
 
 func Load() (Config, error) {

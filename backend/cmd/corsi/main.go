@@ -20,6 +20,7 @@ import (
 	githubint "github.com/corsi/backend/internal/integrations/github"
 	"github.com/corsi/backend/internal/integrations/metathreads"
 	metathreadsapp "github.com/corsi/backend/internal/integrations/metathreads/app"
+	telegramint "github.com/corsi/backend/internal/integrations/telegram"
 	"github.com/corsi/backend/internal/jobradar"
 	"github.com/corsi/backend/internal/palace"
 	"github.com/corsi/backend/internal/platform/config"
@@ -319,6 +320,47 @@ func run() error {
 	})
 	releasesMod.Register(router)
 
+	// ── Telegram ────────────────────────────────────────────────────
+	//
+	// An INTEGRATION, like GitHub and Meta Threads: it owns a credential
+	// and a protocol for one external system and no business rule at all.
+	//
+	// It is the first one wired here that DRIVES rather than being driven.
+	// GitHub hands Agents a capability; Telegram hands nobody anything and
+	// instead receives the chat runtime, adapted by telegramruntime.go —
+	// the interface is the integration's, the implementation is the
+	// composition root's, and neither package imports the other. Read that
+	// file before this block; it is where the argument lives.
+	//
+	// ── The switch is the secret's presence, and nothing else ───────
+	// No TELEGRAM_ENABLED. An empty token constructs no module, starts no
+	// poller and opens no outbound connection, and the rest of C.O.R.S.I.
+	// runs exactly as it does with the variable absent — which is the
+	// state every existing deployment is in right now.
+	//
+	// Registered with NO Register call, like Threads: this integration
+	// serves no browser. Its management surface is cmd/telegramctl, and a
+	// route with no caller is a surface nobody is testing.
+	var telegramMod *telegramint.Module
+	if cfg.Modules.TelegramBotToken != "" {
+		telegramMod, err = telegramint.New(telegramint.Deps{
+			Pool:        pool,
+			Logger:      log,
+			Token:       cfg.Modules.TelegramBotToken,
+			Runtime:     newTelegramRuntime(chatMod.Service(), log),
+			TurnTimeout: cfg.Modules.TelegramTurnTimeout,
+		})
+		if err != nil {
+			// A configured-but-unbuildable integration fails the boot. The
+			// operator asked for Telegram; a process that came up without
+			// it would be a bot that silently answers nobody, which is the
+			// failure mode hardest to notice from the outside.
+			return fmt.Errorf("telegram integration: %w", err)
+		}
+	} else {
+		log.Info("TELEGRAM_BOT_TOKEN not set — the telegram integration is off")
+	}
+
 	// After every module has mounted, and it has to be after: chi copies
 	// these handlers into the sub-routers that exist when they are set, and
 	// each module is a sub-router. See UseErrorEnvelope.
@@ -359,6 +401,34 @@ func run() error {
 		}
 	}()
 
+	// ── The Telegram poller ─────────────────────────────────────────
+	//
+	// A long-lived goroutine rather than a route, because the connection
+	// is OUTBOUND: this process calls Telegram and holds the request open,
+	// which is what lets the operator's phone reach a backend behind NAT
+	// with no public URL and no tunnel.
+	//
+	// ── Why a failed poller does NOT kill the process ───────────────
+	// Because the API is the product and the phone is a convenience. A bot
+	// token revoked at BotFather, or Telegram being unreachable, must not
+	// take down the finance screens, the web chat and the health endpoint
+	// the platform is watching. It is logged as an error — loudly, and
+	// with the reason — and the rest of C.O.R.S.I. keeps serving.
+	//
+	// Retries inside the loop already cover the transient cases; reaching
+	// here means the failure survived them, or the token itself is bad.
+	telegramDone := make(chan struct{})
+	if telegramMod != nil {
+		go func() {
+			defer close(telegramDone)
+			if err := telegramMod.Run(ctx); err != nil {
+				log.Error("telegram integration stopped", "err", err)
+			}
+		}()
+	} else {
+		close(telegramDone)
+	}
+
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
@@ -368,5 +438,21 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+
+	// Wait for the poller to notice the cancelled context and return.
+	//
+	// Bounded, because a turn in flight can legitimately be mid-provider
+	// call and this process should not hang on it forever. Exceeding the
+	// bound is logged rather than escalated: the turn's own write-back
+	// runs on a detached context with its own deadline, so what is at risk
+	// is the outbound Telegram message, not the persisted record.
+	if telegramMod != nil {
+		select {
+		case <-telegramDone:
+		case <-time.After(15 * time.Second):
+			log.Warn("telegram integration did not stop within the shutdown window")
+		}
+	}
+	return shutdownErr
 }

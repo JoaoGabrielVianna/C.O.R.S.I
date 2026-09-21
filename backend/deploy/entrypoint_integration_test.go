@@ -252,7 +252,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 	// One entry per timeline the entrypoint applies. Adding a module means
 	// adding it here, and forgetting to reproduces that outage: the migration
 	// files are all correct and the schema is simply never created.
-	for _, s := range []string{"finance", "chat", "releases", "github"} {
+	for _, s := range []string{"finance", "chat", "releases", "github", "telegram"} {
 		if !schemaExists(t, conn, s) {
 			t.Errorf("schema %q does not exist after the entrypoint migration stage", s)
 		}
@@ -327,6 +327,22 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		}
 	}
 
+	// --- the telegram integration is present --------------------------
+	// ROUTING STATE ONLY. Nothing in this schema is conversation content:
+	// a Telegram turn writes to chat.messages like any other, and dropping
+	// this schema would lose which phone may talk to which workspace and
+	// not one word anybody said.
+	for _, rel := range []string{
+		"telegram.bindings",
+		"telegram.chat_agents",
+		"telegram.pairing_codes",
+		"telegram.update_cursor",
+	} {
+		if !relationExists(t, conn, rel) {
+			t.Errorf("relation %q missing", rel)
+		}
+	}
+
 	// --- bookkeeping is independent -----------------------------------
 	// This is the assertion that pins the `-table` flag. Migrating chat
 	// without it would leave `schema_migrations_chat` absent and silently
@@ -348,6 +364,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		"public.schema_migrations_threads",
 		"public.schema_migrations_metathreads",
 		"public.schema_migrations_palace",
+		"public.schema_migrations_telegram",
 	} {
 		if !relationExists(t, conn, table) {
 			t.Fatalf("version table `%s` missing — that module was migrated without -table", table)

@@ -15,7 +15,8 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/corsi   ./cmd/corsi && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/telegramctl ./cmd/telegramctl
 
 # ─── runtime stage ──────────────────────────────────────────────────────
 FROM alpine:3.20
@@ -26,6 +27,12 @@ RUN apk add --no-cache ca-certificates tzdata && \
 WORKDIR /app
 COPY --from=build /out/corsi   /app/corsi
 COPY --from=build /out/migrate /app/migrate
+# The operator tool that confirms a Telegram pairing code. Shipped in the
+# image because the pairing gate is possession of POSTGRES_DSN, and the
+# container is where that variable already lives — `docker exec ...
+# /app/telegramctl pair -code X` is the deployed form of the local CLI. It
+# serves no traffic and is never executed by the entrypoint.
+COPY --from=build /out/telegramctl /app/telegramctl
 COPY migrations                /app/migrations
 COPY deploy/entrypoint.sh      /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && chown -R corsi:corsi /app
