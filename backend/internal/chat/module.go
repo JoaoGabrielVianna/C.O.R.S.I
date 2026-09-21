@@ -90,6 +90,7 @@ type Deps struct {
 
 type Module struct {
 	deps    Deps
+	svc     *app.Service
 	handler *httpapi.Handler
 }
 
@@ -116,7 +117,7 @@ func New(deps Deps) *Module {
 		// ports.TurnMetrics.
 		app.WithTurnMetrics(deps.TurnMetrics))
 	h := httpapi.NewHandler(svc, deps.Logger)
-	return &Module{deps: deps, handler: h}
+	return &Module{deps: deps, svc: svc, handler: h}
 }
 
 // Register mounts the chat routes under /chat, guarded by the workspace
@@ -127,3 +128,26 @@ func (m *Module) Register(r chi.Router) {
 		m.handler.Mount(r)
 	})
 }
+
+// Service hands the application service to the composition root.
+//
+// ── Why this exists, and why it is not a widening of the boundary ──────
+// HTTP is not the only way to drive a conversation. `Register` gives
+// cmd/corsi one driving adapter — a chi router — and this gives it the
+// seam any OTHER driving adapter needs: a messaging interface, a scheduled
+// job, a CLI. The alternative was for each of those to re-open the
+// repositories, the LLM client, the tool registry and the reference
+// registry, which would mean a second construction of this module that
+// could differ from the first in ways nobody would notice until a
+// guarantee was missing on one surface.
+//
+// It is still cmd/corsi's privilege alone. Nothing in `internal/` may call
+// this: a module or an integration that did would be creating the very
+// import the architecture forbids, and the direction of that arrow is
+// checked by reading the import list, not by hiding the method.
+//
+// What a caller receives is the SAME service the HTTP handler holds, with
+// the same tool registry, the same grants, the same budget, the same
+// receipts and the same prompt caching. That identity is the point: a turn
+// is a turn regardless of what asked for it.
+func (m *Module) Service() *app.Service { return m.svc }
