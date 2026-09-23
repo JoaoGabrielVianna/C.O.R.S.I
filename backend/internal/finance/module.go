@@ -51,12 +51,16 @@ type Module struct {
 func New(deps Deps) *Module {
 	txm := postgres.NewTxManager(deps.Pool)
 	repos := repo.New(deps.Pool)
-	svc := app.NewService(repos, txm, deps.Logger)
-	h := httpapi.NewHandler(svc, deps.Logger)
+	// The reporting zone is resolved FIRST and handed to everything that
+	// crosses between a month and an instant. One value, read once, so the
+	// service and the capabilities cannot disagree about which month an
+	// instant belongs to.
 	loc := deps.ReportingTimezone
 	if loc == nil {
 		loc = time.UTC
 	}
+	svc := app.NewService(repos, txm, deps.Logger, loc)
+	h := httpapi.NewHandler(svc, deps.Logger)
 	return &Module{deps: deps, svc: svc, handler: h, loc: loc}
 }
 

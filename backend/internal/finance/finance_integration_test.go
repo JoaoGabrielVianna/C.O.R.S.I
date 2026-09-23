@@ -99,7 +99,7 @@ func stack(t *testing.T) (*chi.Mux, *pgxpool.Pool, uuid.UUID, uuid.UUID) {
 
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	repos := repo.New(pool)
-	svc := app.NewService(repos, postgres.NewTxManager(pool), log)
+	svc := app.NewService(repos, postgres.NewTxManager(pool), log, time.UTC)
 	h := httpapi.NewHandler(svc, log)
 
 	wsA := uuid.New()

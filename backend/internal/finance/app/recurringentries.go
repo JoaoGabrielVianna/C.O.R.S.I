@@ -33,8 +33,15 @@ type CreateRecurringEntryInput struct {
 	PersonID    *uuid.UUID
 	DueDay      int
 	Recurrence  *domain.RecurringFrequency
-	StartsAt    *time.Time
-	Notes       *string
+	// DueMonth is required when Recurrence is annual and refused
+	// otherwise. The domain holds that rule; see RecurringEntry.Validate
+	// and the header of migration 0015 on why only half of it is a CHECK.
+	DueMonth *int
+	// AmountVaries says the amount is not the same every time. It does not
+	// make AmountCents optional: the amount becomes an estimate.
+	AmountVaries bool
+	StartsAt     *time.Time
+	Notes        *string
 }
 
 func (s *Service) CreateRecurringEntry(ctx context.Context, in CreateRecurringEntryInput) (*domain.RecurringEntry, error) {
@@ -73,17 +80,19 @@ func (s *Service) CreateRecurringEntry(ctx context.Context, in CreateRecurringEn
 		startsAt = *in.StartsAt
 	}
 	f := &domain.RecurringEntry{
-		ID:          uuid.New(),
-		WorkspaceID: in.WorkspaceID,
-		Description: strings.TrimSpace(in.Description),
-		AmountCents: in.AmountCents,
-		CategoryID:  cat.ID,
-		PersonID:    in.PersonID,
-		DueDay:      in.DueDay,
-		Recurrence:  derefOr(in.Recurrence, domain.RecurrenceMonthly),
-		Status:      domain.StatusActive,
-		StartsAt:    startsAt,
-		Notes:       strings.TrimSpace(derefOrString(in.Notes, "")),
+		ID:           uuid.New(),
+		WorkspaceID:  in.WorkspaceID,
+		Description:  strings.TrimSpace(in.Description),
+		AmountCents:  in.AmountCents,
+		CategoryID:   cat.ID,
+		PersonID:     in.PersonID,
+		DueDay:       in.DueDay,
+		Recurrence:   derefOr(in.Recurrence, domain.RecurrenceMonthly),
+		DueMonth:     in.DueMonth,
+		AmountVaries: in.AmountVaries,
+		Status:       domain.StatusActive,
+		StartsAt:     startsAt,
+		Notes:        strings.TrimSpace(derefOrString(in.Notes, "")),
 	}
 	if err := f.Validate(); err != nil {
 		return nil, err
@@ -103,17 +112,85 @@ type UpdateRecurringEntryInput struct {
 	PersonID    *uuid.UUID
 	DueDay      *int
 	Recurrence  *domain.RecurringFrequency
-	Status      *domain.RecurringStatus
-	Notes       *string
+	// DueMonth changes WHICH month an annual obligation falls in, from now
+	// on. It does NOT move occurrences that already exist: those are
+	// historical rows and nothing in this service rewrites one.
+	DueMonth *int
+	// ClearDueMonth is how an entry moving from annual to monthly drops the
+	// month it no longer has. Explicit, so "omitted" keeps meaning
+	// "unchanged".
+	ClearDueMonth bool
+	AmountVaries  *bool
+	Status        *domain.RecurringStatus
+	Notes         *string
 	// EndsAt records a cancellation. ClearEndsAt reinstates a commitment
 	// that was cancelled — both are explicit so "omitted" can keep meaning
 	// "unchanged".
 	EndsAt      *time.Time
 	ClearEndsAt bool
 	ClearPerson bool
+
+	// ApplyToPeriod carries the definition's new amount and due day into
+	// ONE already-materialised month.
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	//	EDITING A DEFINITION CHANGES NOTHING THAT ALREADY HAPPENED
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	// ── Why this exists at all ─────────────────────────────────────────
+	// Because "o aluguel subiu para 2.600", said on the 3rd before paying,
+	// means September too. Without a way to say so the operator would have
+	// to edit the month separately and would, sooner or later, forget —
+	// leaving a month that disagrees with the definition it came from.
+	//
+	// ── Why it is EXPLICIT and narrow rather than automatic ────────────
+	// Because the opposite default rewrites history. An edit that silently
+	// propagated would move March's rent when March was already paid, and
+	// nothing anywhere would record that it had been R$ 2.500 at the time.
+	//
+	// The refusals are therefore hard, and each names a different failure:
+	//
+	//	a PAST period    the month is settled history; changing it makes
+	//	                 "quanto eu pagava em março" answer something that
+	//	                 was never true
+	//	a FUTURE period  there is nothing there; a future month is a
+	//	                 projection and a projection recomputes itself
+	//	a PAID month     two facts are already on record, and moving one
+	//	                 of them leaves the row self-contradictory
+	//
+	// Only the CURRENT period, only while PENDING, only for the entry
+	// being edited, only inside its workspace.
+	//
+	// Nil means the definition alone changes, which is and stays the
+	// default for every caller that does not ask otherwise.
+	ApplyToPeriod *domain.Period
 }
 
 func (s *Service) UpdateRecurringEntry(ctx context.Context, in UpdateRecurringEntryInput) (*domain.RecurringEntry, error) {
+	// The definition and the month it may touch move together or not at
+	// all. Half of an "o aluguel subiu, aplica a setembro" is worse than
+	// neither half: the two would then disagree with nothing saying why.
+	if in.ApplyToPeriod != nil {
+		var out *domain.RecurringEntry
+		err := s.txm.WithinTx(ctx, func(ctx context.Context) error {
+			f, err := s.updateRecurringEntry(ctx, in)
+			if err != nil {
+				return err
+			}
+			if err := s.applyDefinitionToPeriod(ctx, f, *in.ApplyToPeriod); err != nil {
+				return err
+			}
+			out = f
+			return nil
+		})
+		return out, err
+	}
+	return s.updateRecurringEntry(ctx, in)
+}
+
+func (s *Service) updateRecurringEntry(ctx context.Context, in UpdateRecurringEntryInput) (*domain.RecurringEntry, error) {
 	current, err := s.repos.RecurringEntries.FindByID(ctx, in.WorkspaceID, in.ID)
 	if err != nil {
 		return nil, err
@@ -145,6 +222,14 @@ func (s *Service) UpdateRecurringEntry(ctx context.Context, in UpdateRecurringEn
 	if in.Recurrence != nil {
 		current.Recurrence = *in.Recurrence
 	}
+	if in.ClearDueMonth {
+		current.DueMonth = nil
+	} else if in.DueMonth != nil {
+		current.DueMonth = in.DueMonth
+	}
+	if in.AmountVaries != nil {
+		current.AmountVaries = *in.AmountVaries
+	}
 	if in.Status != nil {
 		current.Status = *in.Status
 	}
@@ -163,6 +248,59 @@ func (s *Service) UpdateRecurringEntry(ctx context.Context, in UpdateRecurringEn
 		return nil, err
 	}
 	return current, nil
+}
+
+// applyDefinitionToPeriod carries a just-edited definition into ONE month.
+//
+// Every refusal below names a different way history could be rewritten, and
+// none of them is a judgement call the caller gets to make. See
+// UpdateRecurringEntryInput.ApplyToPeriod for the argument.
+//
+// ── What it propagates, and what it recomputes ─────────────────────────
+// The amount and the due date, both from the definition as it stands after
+// the edit. `amount_estimated` is recomputed the way materialisation would
+// have computed it for this month — false for a fixed obligation, true for
+// a varying one — because the new default is still a DEFAULT and not a bill
+// that arrived.
+//
+// ── What it cannot do, structurally rather than by rule ────────────────
+// Move an annual occurrence to another month. It resolves exactly one row,
+// at (this entry, this period), and it never inserts or deletes. So a
+// due_month that changed from March to June leaves March's row in March;
+// June acquires one the next time June is read, which is the ordinary path.
+func (s *Service) applyDefinitionToPeriod(ctx context.Context, f *domain.RecurringEntry, p domain.Period) error {
+	if p.IsZero() {
+		return domain.Invalid("apply_to_period must be a calendar month as YYYY-MM")
+	}
+	now, err := s.repos.Clock.Now(ctx)
+	if err != nil {
+		return err
+	}
+	current := domain.PeriodOf(now, s.loc)
+	if !p.Equal(current) {
+		if p.Before(current) {
+			return domain.Invalid("a past month is settled history and is not rewritten by editing " +
+				"the recurrence; change that month directly if its amount was wrong")
+		}
+		return domain.Invalid("a future month has no recorded obligations yet: it is projected from " +
+			"the recurrence and already reflects this change")
+	}
+
+	o, err := s.repos.RecurringOccurrences.FindByEntryPeriod(ctx, f.WorkspaceID, f.ID, p)
+	if err != nil {
+		return err
+	}
+	if o.Status == domain.OccurrencePaid {
+		return domain.Conflict("this month is already marked paid, so editing the recurrence does " +
+			"not change it; mark it pending first if the amount recorded for it was wrong")
+	}
+
+	o.AmountCents = f.AmountCents
+	o.AmountEstimated = f.AmountVaries
+	o.DueOn = f.DueOnIn(p)
+	// ApplyDefinition rather than Update: this is the only path that may
+	// move a due date, and it is the only method that can. See the port.
+	return s.repos.RecurringOccurrences.ApplyDefinition(ctx, o)
 }
 
 // DeleteRecurringEntry removes the record entirely (soft).

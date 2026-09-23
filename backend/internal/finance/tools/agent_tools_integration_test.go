@@ -238,7 +238,7 @@ func newEnv(t *testing.T) *env {
 	}
 
 	// Finance, wired the way module.go wires it.
-	svc := app.NewService(repo.New(pool), postgres.NewTxManager(pool), log)
+	svc := app.NewService(repo.New(pool), postgres.NewTxManager(pool), log, loc)
 
 	// The Agents stack, wired the way cmd/corsi wires it — including the
 	// seam the Finance tools arrive through. `Internal: false` is the
