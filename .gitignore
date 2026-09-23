@@ -20,3 +20,30 @@ node_modules/
 dist/
 coverage/
 *.log
+
+# ─── material interno e contexto de desenvolvimento ─────────────────
+# Estas regras estavam apenas em .git/info/exclude, que é local e não
+# sobrevive a um clone. Uma máquina nova clonava o repositório sem
+# proteção nenhuma, e o primeiro `git add -A` depois de copiar o
+# material interno de volta publicaria tudo.
+#
+# Versioná-las revela que existe material não publicado. Revela só
+# isso: nenhum conteúdo, nenhum caminho interno, nenhum nome de
+# documento. É o preço de uma proteção que o Git aplica sozinho em
+# todo clone, sem passo manual que alguém esqueça.
+#
+# `/docs/` é ancorado na raiz de propósito: `backend/docs/` é
+# documentação técnica publicada e continua versionada.
+/docs/
+CLAUDE.md
+**/CLAUDE.md
+AGENTS.md
+**/AGENTS.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.windsurf/
+.codeium/
+.github/copilot-instructions.md
