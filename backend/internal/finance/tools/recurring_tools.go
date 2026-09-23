@@ -164,6 +164,24 @@ func (recurringCreate) Definition() chatdomain.ToolDefinition {
 						". Defaults to monthly.",
 					MaxLength: 10,
 				},
+				// ── Why an annual entry cannot be recorded without this ──
+				// Because "annual" alone does not say WHEN. An IPVA is due
+				// in January whether it was written down in January or in
+				// September, and there is nothing in a recurrence or a
+				// start date that distinguishes the two. Left to be
+				// inferred it would land in the month of its own data
+				// entry, and a yearly bill in the wrong month is a total
+				// that is wrong twice: too high in one month, too low in
+				// another, both by the whole amount.
+				"due_month": {
+					Type: chatdomain.TypeInteger,
+					Description: "Required when recurrence is 'annual', and must not be sent " +
+						"otherwise. The MONTH it falls due, 1 for January to 12 for December. " +
+						"It is not the month the user is telling you about it: \"pago IPVA todo " +
+						"ano\" said in September is due_month 1 if the user says January. If they " +
+						"have not said which month, ASK — never infer it from today's date or " +
+						"from when the record is being created.",
+				},
 				"notes": {
 					Type:        chatdomain.TypeString,
 					Description: "Optional. Only what the user actually said.",
@@ -197,6 +215,7 @@ func (t recurringCreate) Execute(ctx context.Context, args map[string]any) (chat
 	in := app.CreateRecurringEntryInput{
 		WorkspaceID: ws, Description: argString(args, "description"),
 		AmountCents: *amount, CategoryID: catID, DueDay: *dueDay,
+		DueMonth: argIntPtr(args, "due_month"),
 	}
 	if raw := strings.TrimSpace(argString(args, "recurrence")); raw != "" {
 		r, err := domain.ParseRecurrence(raw)
@@ -275,6 +294,12 @@ func (recurringUpdate) Definition() chatdomain.ToolDefinition {
 					Type:        chatdomain.TypeInteger,
 					Description: "Optional. New day of the month it falls due, 1 to 31.",
 				},
+				"due_month": {
+					Type: chatdomain.TypeInteger,
+					Description: "Optional, and only for an annual entry: the MONTH it falls due, " +
+						"1 to 12. It must be set when an entry becomes annual, and it must be " +
+						"absent on a monthly one. If the user has not said which month, ask.",
+				},
 				"category_id": {
 					Type: chatdomain.TypeString,
 					Description: "Optional. A different category, by id. Moving an entry to a " +
@@ -336,6 +361,13 @@ func (t recurringUpdate) Execute(ctx context.Context, args map[string]any) (chat
 		AmountCents: argInt64Ptr(args, "amount_cents"),
 		Description: argStringPtr(args, "description"),
 		DueDay:      argIntPtr(args, "due_day"),
+		// Only the month moves here, never the frequency: this tool has no
+		// `recurrence` argument and never had one, so an entry cannot
+		// change between monthly and annual through a conversation. That
+		// keeps `due_month` a single-meaning field on this path — it can be
+		// corrected, and it can never be left stranded on an entry that
+		// stopped being annual.
+		DueMonth: argIntPtr(args, "due_month"),
 	}
 	if raw := argStringPtr(args, "category_id"); raw != nil {
 		cid, err := parseID(*raw, "category_id")

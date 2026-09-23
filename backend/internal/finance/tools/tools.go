@@ -77,6 +77,12 @@ func New(svc *app.Service, loc *time.Location) []chatports.Tool {
 		recurringList{b},
 		recurringCreate{b},
 		recurringUpdate{b},
+		// One month of the recurrences: what it owes and what is settled.
+		// The only source of paid state — see occurrence_tools.go.
+		recurringMonth{b},
+		markPaid{b},
+		markPending{b},
+		setMonthAmount{b},
 		summaryGet{b},
 		recurringSummaryGet{b},
 		importSourceList{b},

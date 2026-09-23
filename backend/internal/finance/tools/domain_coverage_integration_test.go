@@ -26,6 +26,7 @@ var allDomainTools = []chatdomain.ToolName{
 	PersonListTool, PersonCreateTool, PersonUpdateTool,
 	RecurringListTool, RecurringCreateTool, RecurringUpdateTool,
 	RecurringSummaryTool,
+	RecurringMonthTool, MarkPaidTool, MarkPendingTool, SetMonthAmountTool,
 }
 
 // The capability names, asserted literally.
@@ -42,6 +43,12 @@ func TestCapabilityNamesAreTheContract(t *testing.T) {
 		"finance.import_source.create", "finance.import_source.list",
 		"finance.person.create", "finance.person.list", "finance.person.update",
 		"finance.recurring_entry.create", "finance.recurring_entry.list",
+		// The monthly-commitment four: one read of a month, and the three
+		// verbs that write one. No occurrence.update and no toggle — see
+		// occurrence_tools.go.
+		"finance.recurring_entry.mark_paid", "finance.recurring_entry.mark_pending",
+		"finance.recurring_entry.month",
+		"finance.recurring_entry.set_month_amount",
 		"finance.recurring_entry.summary", "finance.recurring_entry.update",
 		"finance.summary.get",
 		"finance.transaction.create", "finance.transaction.delete",
@@ -404,7 +411,10 @@ func TestRecurringEntryRefusesAnUnknownCategory(t *testing.T) {
 func TestRecurringSummaryNormalisesAnnualAndExcludesCancelled(t *testing.T) {
 	e := newEnv(t)
 	cat := e.seedCategory(e.wsA, "Assinaturas", domain.EntryTypeExpense)
-	mk := func(desc string, cents int64, rec string) uuid.UUID {
+	// dueMonth is sent only for an annual entry, because that is the rule:
+	// an annual recurrence has to say WHICH month it falls in, and a
+	// monthly one is refused the field. See RecurringEntry.Validate.
+	mk := func(desc string, cents int64, rec string, dueMonth int) uuid.UUID {
 		args := map[string]any{
 			"description": desc, "amount_cents": cents,
 			"category_id": cat.ID.String(), "due_day": 10,
@@ -412,12 +422,19 @@ func TestRecurringSummaryNormalisesAnnualAndExcludesCancelled(t *testing.T) {
 		if rec != "" {
 			args["recurrence"] = rec
 		}
+		if dueMonth != 0 {
+			args["due_month"] = dueMonth
+		}
 		return uuid.MustParse(str(t, e.execute(t, e.wsA, RecurringCreateTool, args), "recurring_entry_id"))
 	}
 
-	mk("Netflix", 5_590, "")          // monthly
-	gym := mk("Academia", 12_000, "") // monthly, cancelled below
-	mk("Seguro", 120_000, "annual")   // annual → 10.000 per month
+	mk("Netflix", 5_590, "", 0)          // monthly
+	gym := mk("Academia", 12_000, "", 0) // monthly, cancelled below
+	// Annual, due in March. The summary still reports a TWELFTH of it per
+	// month: this contract answers "quanto sai por mês" and is deliberately
+	// untouched by the monthly-commitment reading, which puts the whole
+	// amount in March and nothing in the other eleven.
+	mk("Seguro", 120_000, "annual", 3) // annual → 10.000 per month
 
 	out := e.execute(t, e.wsA, RecurringSummaryTool, nil)
 	if got := num(t, out, "expense_monthly_cents"); got != 5_590+12_000+10_000 {
