@@ -599,6 +599,91 @@ func TestCategoryListIsTheWholeVocabulary(t *testing.T) {
 	}
 }
 
+// TestCategoryListCarriesTheDateAnchor is the regression for a relative
+// date arriving at a write with nothing to count from.
+//
+// ── The turn this protects ─────────────────────────────────────────────
+// "Ontem gastei 90 no cinema". The model is instructed to choose a category
+// before recording, so the turn is category.list → transaction.create, and
+// for a long time the first of those returned no date. The model reached
+// the write with no anchor and two ways to be wrong: omit occurred_on and
+// file yesterday's money under today, or compose a date out of its
+// training. Both produce a real row on the wrong day, and neither raises an
+// error anywhere.
+//
+// The assertion is deliberately about the FRESH workspace as well: a
+// listing with no categories in it still has to carry the date, because the
+// date is a fact about the clock rather than about the list.
+func TestCategoryListCarriesTheDateAnchor(t *testing.T) {
+	e := newEnv(t)
+
+	want := e.today().Format("2006-01-02")
+
+	empty := e.execute(t, e.wsA, CategoryListTool, nil)
+	if got := str(t, empty, "today"); got != want {
+		t.Fatalf("an empty category listing reported today as %q, want %q", got, want)
+	}
+	if got := str(t, empty, "time_zone"); got != e.loc.String() {
+		t.Fatalf("the listing reported the zone as %q, want %q", got, e.loc.String())
+	}
+
+	e.seedCategory(e.wsA, "Lazer", domain.EntryTypeExpense)
+	full := e.execute(t, e.wsA, CategoryListTool, nil)
+	if got := str(t, full, "today"); got != want {
+		t.Fatalf("a populated category listing reported today as %q, want %q", got, want)
+	}
+
+	// The filtered listing is the same read and must answer the same way:
+	// a model that narrowed to expenses has not stopped needing the date.
+	filtered := e.execute(t, e.wsA, CategoryListTool, map[string]any{"type": "expense"})
+	if got := str(t, filtered, "today"); got != want {
+		t.Fatalf("a filtered category listing reported today as %q, want %q", got, want)
+	}
+}
+
+// TestRelativeDateFromTheAnchorIsStoredOnThatDay walks the anchor all the
+// way to the stored column.
+//
+// It is the deterministic half of the live-model claim: given the date
+// category.list reports, counting one day back and sending it as
+// occurred_on puts the row on yesterday and NOT on today. The live suite
+// proves a real model does the counting; this proves the counting lands
+// where it should.
+func TestRelativeDateFromTheAnchorIsStoredOnThatDay(t *testing.T) {
+	e := newEnv(t)
+	cat := e.seedCategory(e.wsA, "Lazer", domain.EntryTypeExpense)
+
+	anchor := str(t, e.execute(t, e.wsA, CategoryListTool, nil), "today")
+	day, err := time.ParseInLocation("2006-01-02", anchor, e.loc)
+	if err != nil {
+		t.Fatalf("the anchor %q is not a calendar date: %v", anchor, err)
+	}
+	yesterday := day.AddDate(0, 0, -1).Format("2006-01-02")
+
+	out := e.execute(t, e.wsA, TransactionCreateTool, map[string]any{
+		"category_id":  cat.ID.String(),
+		"amount_cents": 9000,
+		"description":  "cinema",
+		"occurred_on":  yesterday,
+	})
+	if got := str(t, out, "occurred_on"); got != yesterday {
+		t.Fatalf("the create reported %q, want %q", got, yesterday)
+	}
+
+	id, err := uuid.Parse(str(t, out, "transaction_id"))
+	if err != nil {
+		t.Fatalf("transaction_id: %v", err)
+	}
+	var stored time.Time
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT occurred_at FROM finance.transactions WHERE id = $1`, id).Scan(&stored); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got := stored.In(e.loc).Format("2006-01-02"); got != yesterday {
+		t.Fatalf("the stored row sits on %s, want %s", got, yesterday)
+	}
+}
+
 // Money that has not moved is reported apart from money that has.
 func TestScheduledMoneyIsProjectedAndNotRealized(t *testing.T) {
 	e := newEnv(t)
