@@ -127,7 +127,7 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
-	svc := app.NewService(repo.New(pool), postgres.NewTxManager(pool), log)
+	svc := app.NewService(repo.New(pool), postgres.NewTxManager(pool), log, loc)
 	registry := chattools.MustNew(chattools.Options{Extra: New(svc, loc)})
 	sealer, err := secrets.New(secrets.Config{Key: testSecretsKey})
 	if err != nil {
@@ -347,6 +347,468 @@ func TestLedgerLiveWithoutGrantsWritesNothing(t *testing.T) {
 			t.Fatalf("%s succeeded for an agent with no grants", ev.Name)
 		}
 	}
+}
+
+/* ── daily capture, the way it is actually typed ─────────────────────── */
+
+// capturedRow is one stored transaction, read straight from the columns.
+type capturedRow struct {
+	ID          uuid.UUID
+	AmountCents int64
+	OccurredAt  time.Time
+	Source      string
+	Type        string
+}
+
+// liveRows reads every live transaction in a workspace, from the database.
+//
+// Through SQL rather than through the service that wrote them, for the
+// reason the deterministic suite gives: a readback through the same code
+// path agrees with a consistent mistake, and the whole claim here is about
+// what is IN the ledger.
+func (l *liveEnv) liveRows(t *testing.T) []capturedRow {
+	t.Helper()
+	rows, err := l.pool.Query(context.Background(),
+		`SELECT id, amount_cents, occurred_at, source::text, type::text
+		   FROM finance.transactions
+		  WHERE workspace_id = $1 AND deleted_at IS NULL
+		  ORDER BY created_at`, l.wsA)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	defer rows.Close()
+	var out []capturedRow
+	for rows.Next() {
+		var r capturedRow
+		if err := rows.Scan(&r.ID, &r.AmountCents, &r.OccurredAt, &r.Source, &r.Type); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	return out
+}
+
+// receiptFor is the turn's own answer to "did anything change", derived by
+// the runtime from execution records.
+//
+// Asserted on deliberately: the point of daily capture is that the operator
+// is told the expense was recorded ONLY when it was, and "the model said
+// so" is not evidence. This reads the same receipt the Telegram footer and
+// the web client read.
+func (l *liveEnv) receiptFor(t *testing.T, messageID uuid.UUID) chatdomain.WriteReceipt {
+	t.Helper()
+	receipts, err := l.chatSvc.WriteReceipts(ctxFor(l.wsA), l.wsA, []uuid.UUID{messageID})
+	if err != nil {
+		t.Fatalf("write receipts: %v", err)
+	}
+	return receipts[messageID]
+}
+
+// sendAndCapture runs one turn and hands back BOTH the persisted assistant
+// turn and what was observed while it ran.
+//
+// Both, because the two answer different questions and a test usually needs
+// each: the message id resolves the turn's write receipt, which is the
+// evidence that something was executed, and the sink says which
+// capabilities ran, which is how a test can tell "read then wrote" from
+// "wrote blind".
+func (l *liveEnv) sendAndCapture(t *testing.T, text string) (uuid.UUID, *collectSink) {
+	t.Helper()
+	sink := &collectSink{}
+	msg, err := l.chatSvc.SendMessage(ctxFor(l.wsA), chatapp.SendMessageInput{
+		WorkspaceID: l.wsA, ConversationID: l.convID, Content: text,
+	}, sink)
+	if err != nil {
+		t.Fatalf("turn %q: %v", text, err)
+	}
+	t.Logf("\n> %s\n%s\n  [capabilities: %s]", text, sink.text.String(), strings.Join(l.ran(sink), ", "))
+	return msg.ID, sink
+}
+
+// TestLedgerLiveDailyCapture is the sprint's daily-expense claim, phrase by
+// phrase, against a real model.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	THE OPERATOR TYPES ONE LINE; THE LEDGER HOLDS THE RIGHT ROW
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// ── Why each phrase gets its own environment ───────────────────────────
+// Because these are four independent product claims and a shared
+// conversation would let one of them pass on the strength of another's
+// context. "Uber 28 reais agora" has to work as the FIRST thing somebody
+// says, because on a phone it usually is. A subtest per phrase also means a
+// failure names exactly which sentence the model got wrong.
+//
+// ── What each one asserts, and why the prose is not one of them ────────
+// Exactly one live row; the exact integer of cents; `source = ai`, so the
+// origin badge cannot lie about where the row came from; the calendar day,
+// in the reporting zone; and a write receipt reporting one executed write.
+// Nothing here reads the answer the model produced. The model's sentence is
+// logged for a human to look at and is never the evidence.
+//
+// ── The zone ───────────────────────────────────────────────────────────
+// Every date comparison is made in the suite's own reporting location,
+// which is the location the tools were built with. Comparing in UTC would
+// pass in the morning and fail after 21:00 in São Paulo, which is precisely
+// the class of bug the midday stamping rule exists to prevent.
+func TestLedgerLiveDailyCapture(t *testing.T) {
+	cases := []struct {
+		name string
+		// text is EXACTLY what the operator types. Not paraphrased.
+		text string
+		// wantCents is the integer that must be in the column. The whole
+		// sprint fails if "28 reais" lands as 28.
+		wantCents int64
+		// dayOffset is which calendar day, counted from today in the
+		// reporting zone. Zero is today, -1 is yesterday.
+		dayOffset int
+		// category is the vocabulary the workspace is given, so the model
+		// has something correct to choose and the test is not really
+		// measuring whether a category happened to fit.
+		category string
+	}{
+		{
+			name:      "mercado sem verbo",
+			text:      "Mercado 186,43",
+			wantCents: 18643,
+			dayOffset: 0,
+			category:  "Mercado",
+		},
+		{
+			name: "uber em reais inteiros, agora",
+			// The trap: "28 reais" has no centavos, and a model that sends
+			// the number it read records twenty-eight centavos.
+			text:      "Uber 28 reais agora",
+			wantCents: 2800,
+			dayOffset: 0,
+			category:  "Transporte",
+		},
+		{
+			name:      "almoco com centavos",
+			text:      "Gastei 37,90 no almoço",
+			wantCents: 3790,
+			dayOffset: 0,
+			category:  "Alimentação",
+		},
+		{
+			name: "ontem, data relativa",
+			// The trap this sprint's Phase A closes: the model has no clock,
+			// so "ontem" is only answerable by counting from the `today`
+			// that a Finance read reports.
+			text:      "Ontem gastei 90 no cinema",
+			wantCents: 9000,
+			dayOffset: -1,
+			category:  "Lazer",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newLiveEnv(t)
+			t.Logf("model: %s", l.model)
+			l.seedCategory(l.wsA, tc.category, domain.EntryTypeExpense)
+
+			messageID, _ := l.sendAndCapture(t, tc.text)
+
+			rows := l.liveRows(t)
+			if len(rows) != 1 {
+				t.Fatalf("%q produced %d live transactions, want exactly 1", tc.text, len(rows))
+			}
+			got := rows[0]
+
+			if got.AmountCents != tc.wantCents {
+				t.Errorf("%q stored %d cents, want %d", tc.text, got.AmountCents, tc.wantCents)
+			}
+			if got.Source != string(domain.TransactionSourceAI) {
+				t.Errorf("%q stored source %q, want ai", tc.text, got.Source)
+			}
+			if got.Type != string(domain.EntryTypeExpense) {
+				t.Errorf("%q stored type %q, want expense", tc.text, got.Type)
+			}
+
+			// The day, resolved in the reporting zone from the same clock
+			// the tools read, not from this process's wall clock.
+			now, err := l.svc.Now(context.Background())
+			if err != nil {
+				t.Fatalf("clock: %v", err)
+			}
+			wantDay := now.In(l.loc).AddDate(0, 0, tc.dayOffset).Format("2006-01-02")
+			gotDay := got.OccurredAt.In(l.loc).Format("2006-01-02")
+			if gotDay != wantDay {
+				t.Errorf("%q landed on %s, want %s", tc.text, gotDay, wantDay)
+			}
+
+			// The receipt, derived from execution records. One executed
+			// write, nothing failed, nothing refused.
+			receipt := l.receiptFor(t, messageID)
+			if !receipt.Confirmed() {
+				t.Errorf("%q: the turn's receipt does not confirm any write (executed=%d failed=%d refused=%d)",
+					tc.text, receipt.Executed, receipt.Failed, receipt.Refused)
+			}
+			if receipt.Executed != 1 {
+				t.Errorf("%q: receipt reports %d executed writes, want 1", tc.text, receipt.Executed)
+			}
+			if receipt.Failed != 0 || receipt.Refused != 0 {
+				t.Errorf("%q: receipt reports failed=%d refused=%d, want 0 and 0",
+					tc.text, receipt.Failed, receipt.Refused)
+			}
+			t.Logf("%-28s %7d cents · %s · source=%s · receipt executed=%d",
+				tc.text, got.AmountCents, gotDay, got.Source, receipt.Executed)
+		})
+	}
+}
+
+/* ── monthly commitment, against a real model ────────────────────────── */
+
+// liveMonth reads a month through the application service, so an assertion
+// is about the persisted state and never about the model's prose.
+func (l *liveEnv) liveMonth(t *testing.T) app.MonthlyCommitmentView {
+	t.Helper()
+	v, err := l.svc.GetMonthlyCommitment(ctxFor(l.wsA), app.GetMonthlyCommitmentInput{
+		WorkspaceID: l.wsA,
+	})
+	if err != nil {
+		t.Fatalf("read month: %v", err)
+	}
+	return v
+}
+
+func (l *liveEnv) occurrenceOf(t *testing.T, entryID uuid.UUID) domain.RecurringOccurrence {
+	t.Helper()
+	for _, line := range l.liveMonth(t).Lines {
+		if line.RecurringEntryID == entryID {
+			return line.Occurrence
+		}
+	}
+	t.Fatalf("the month has no occurrence for %s", entryID)
+	return domain.RecurringOccurrence{}
+}
+
+// seedLiveRecurring creates a synthetic obligation that has been running
+// for a year, so the current month is one it applies to.
+func (l *liveEnv) seedLiveRecurring(
+	t *testing.T, cat *domain.Category, desc string, cents int64, dueDay int, varies bool,
+) *domain.RecurringEntry {
+	t.Helper()
+	f, err := l.svc.CreateRecurringEntry(ctxFor(l.wsA), app.CreateRecurringEntryInput{
+		WorkspaceID: l.wsA, Description: desc, AmountCents: cents,
+		CategoryID: cat.ID, DueDay: dueDay, AmountVaries: varies,
+	})
+	if err != nil {
+		t.Fatalf("seed recurring %s: %v", desc, err)
+	}
+	if _, err := l.pool.Exec(context.Background(),
+		`UPDATE finance.recurring_entries SET starts_at = now() - interval '1 year' WHERE id = $1`,
+		f.ID); err != nil {
+		t.Fatalf("backdate %s: %v", desc, err)
+	}
+	reloaded, err := l.svc.GetRecurringEntry(ctxFor(l.wsA), l.wsA, f.ID)
+	if err != nil {
+		t.Fatalf("reload %s: %v", desc, err)
+	}
+	return reloaded
+}
+
+// grantMonthlyCommitment adds the four monthly-commitment capabilities to
+// the live agent, on top of the transaction set newLiveEnv already granted.
+func (l *liveEnv) grantMonthlyCommitment(t *testing.T) {
+	t.Helper()
+	for _, n := range allOccurrenceTools {
+		if err := l.chatSvc.AuthorizeTool(ctxFor(l.wsA), l.wsA, l.agentID, n); err != nil {
+			t.Fatalf("authorize %s: %v", n, err)
+		}
+	}
+}
+
+// TestLedgerLiveMonthlyCommitment is the conversational half of this
+// sprint, against a real model.
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+//	READ THE MONTH, THEN WRITE ONE ROW, AND ASK WHEN IT IS AMBIGUOUS
+//
+// ══════════════════════════════════════════════════════════════════════
+//
+// ── Why these cannot be proved with a scripted model ───────────────────
+// Every claim here is about JUDGEMENT. That a question is answered from a
+// read rather than from the recurrences; that "paguei a internet" settles
+// exactly one bill; that "marquei errado" reverses it rather than marking
+// something else; and, above all, that two obligations both plausibly
+// called "internet" produce a QUESTION and no write at all. A script
+// cannot fail any of those, so it cannot pass them either.
+//
+// ── What is asserted, and what is not ──────────────────────────────────
+// Persisted state, capability calls and receipts. The model's sentences
+// are logged for a human to read and are never the evidence: the whole
+// point of the receipt is that prose is not proof.
+func TestLedgerLiveMonthlyCommitment(t *testing.T) {
+	t.Run("reads the month and writes nothing", func(t *testing.T) {
+		l := newLiveEnv(t)
+		l.grantMonthlyCommitment(t)
+		t.Logf("model: %s", l.model)
+		cat := l.seedCategory(l.wsA, "Casa", domain.EntryTypeExpense)
+		rent := l.seedLiveRecurring(t, cat, "Aluguel", 250000, 5, false)
+		l.seedLiveRecurring(t, cat, "Academia", 17000, 10, false)
+
+		// One bill already settled, so "o que falta" has a real answer that
+		// is not simply "everything".
+		l.liveMonth(t) // materialise
+		if _, err := l.svc.MarkOccurrencePaid(ctxFor(l.wsA), app.OccurrenceRef{
+			WorkspaceID: l.wsA, RecurringEntryID: rent.ID,
+		}); err != nil {
+			t.Fatalf("settle the rent: %v", err)
+		}
+
+		before := l.liveMonth(t)
+		sink := l.say(t, "O que falta pagar esse mês?")
+
+		if !called(sink, RecurringMonthTool) {
+			t.Fatal("a question about the month was answered without reading the month")
+		}
+		for _, w := range []chatdomain.ToolName{MarkPaidTool, MarkPendingTool, SetMonthAmountTool} {
+			if called(sink, w) {
+				t.Fatalf("a question caused %s to run", w)
+			}
+		}
+		after := l.liveMonth(t)
+		if after.Totals.PaidCents != before.Totals.PaidCents ||
+			after.Totals.CommittedCents != before.Totals.CommittedCents {
+			t.Fatal("a question changed the month")
+		}
+		// The figure in the answer has to be the figure in the database.
+		// Checked loosely, on the one number that matters: what is left.
+		if !strings.Contains(sink.text.String(), "170,00") &&
+			!strings.Contains(sink.text.String(), "170") {
+			t.Errorf("the answer does not contain the remaining amount:\n%s", sink.text.String())
+		}
+	})
+
+	t.Run("settles exactly one bill", func(t *testing.T) {
+		l := newLiveEnv(t)
+		l.grantMonthlyCommitment(t)
+		cat := l.seedCategory(l.wsA, "Casa", domain.EntryTypeExpense)
+		internet := l.seedLiveRecurring(t, cat, "Internet", 13000, 15, false)
+		rent := l.seedLiveRecurring(t, cat, "Aluguel", 250000, 5, false)
+		l.liveMonth(t)
+
+		messageID, sink := l.sendAndCapture(t, "Paguei a internet.")
+
+		// The month is read BEFORE the write: the id a write targets comes
+		// from that read, and a model that wrote without one guessed it.
+		if !called(sink, RecurringMonthTool) {
+			t.Error("the bill was settled without reading the month first")
+		}
+		if got := l.occurrenceOf(t, internet.ID); got.Status != domain.OccurrencePaid {
+			t.Fatalf("the internet was not settled: %q", got.Status)
+		}
+		if got := l.occurrenceOf(t, rent.ID); got.Status != domain.OccurrencePending {
+			t.Fatal("settling the internet also settled the rent")
+		}
+		// Exactly one write, proved by the receipt rather than by counting
+		// what the model said it did.
+		r := l.receiptFor(t, messageID)
+		if r.Executed != 1 || r.Failed != 0 || r.Refused != 0 {
+			t.Fatalf("receipt: executed=%d failed=%d refused=%d", r.Executed, r.Failed, r.Refused)
+		}
+		if len(r.Writes) != 1 || r.Writes[0].Capability != MarkPaidTool {
+			t.Fatalf("the receipt names %v", r.Writes)
+		}
+		// And nothing reached the ledger.
+		if n := l.liveCount(l.wsA); n != 0 {
+			t.Fatalf("settling a bill created %d transactions", n)
+		}
+	})
+
+	t.Run("reverses a mistaken settlement", func(t *testing.T) {
+		l := newLiveEnv(t)
+		l.grantMonthlyCommitment(t)
+		cat := l.seedCategory(l.wsA, "Casa", domain.EntryTypeExpense)
+		internet := l.seedLiveRecurring(t, cat, "Internet", 13000, 15, false)
+		l.liveMonth(t)
+
+		l.say(t, "Paguei a internet.")
+		if got := l.occurrenceOf(t, internet.ID); got.Status != domain.OccurrencePaid {
+			t.Skip("the settlement did not happen, so there is nothing to reverse")
+		}
+
+		messageID, _ := l.sendAndCapture(t, "Marquei errado. A internet ainda não foi paga.")
+		if got := l.occurrenceOf(t, internet.ID); got.Status != domain.OccurrencePending {
+			t.Fatalf("the reversal left it %q", got.Status)
+		}
+		r := l.receiptFor(t, messageID)
+		if r.Executed != 1 {
+			t.Fatalf("receipt: executed=%d, want exactly 1", r.Executed)
+		}
+		if len(r.Writes) != 1 || r.Writes[0].Capability != MarkPendingTool {
+			t.Fatalf("the receipt names %v", r.Writes)
+		}
+	})
+
+	// ── The one that matters most ──────────────────────────────────
+	//
+	// Two obligations either of which a person could mean by "a internet".
+	// The right behaviour is a QUESTION and no write: settling the wrong
+	// bill leaves the real one looking paid, and nothing in the system will
+	// ever flag it.
+	t.Run("asks rather than guessing when two bills could be meant", func(t *testing.T) {
+		l := newLiveEnv(t)
+		l.grantMonthlyCommitment(t)
+		cat := l.seedCategory(l.wsA, "Casa", domain.EntryTypeExpense)
+		home := l.seedLiveRecurring(t, cat, "Internet casa", 13000, 15, false)
+		office := l.seedLiveRecurring(t, cat, "Internet escritório", 19900, 20, false)
+		l.liveMonth(t)
+
+		messageID, sink := l.sendAndCapture(t, "Paguei a internet.")
+
+		for _, f := range []*domain.RecurringEntry{home, office} {
+			if got := l.occurrenceOf(t, f.ID); got.Status != domain.OccurrencePending {
+				t.Fatalf("an ambiguous instruction settled %q", f.Description)
+			}
+		}
+		r := l.receiptFor(t, messageID)
+		if r.Executed != 0 {
+			t.Fatalf("an ambiguous instruction executed %d writes", r.Executed)
+		}
+		// Having read the month is not required, but asking is: the answer
+		// has to come back as a question the user can answer.
+		if answer := sink.text.String(); !strings.Contains(answer, "?") {
+			t.Errorf("the model did not ask which bill was meant:\n%s", answer)
+		}
+	})
+
+	t.Run("records a variable amount without settling it", func(t *testing.T) {
+		l := newLiveEnv(t)
+		l.grantMonthlyCommitment(t)
+		cat := l.seedCategory(l.wsA, "Casa", domain.EntryTypeExpense)
+		power := l.seedLiveRecurring(t, cat, "Luz", 42000, 25, true)
+		l.liveMonth(t)
+
+		messageID, _ := l.sendAndCapture(t, "A luz desse mês veio 437,20.")
+
+		got := l.occurrenceOf(t, power.ID)
+		if got.AmountCents != 43720 {
+			t.Errorf("the month holds %d cents, want 43720", got.AmountCents)
+		}
+		if got.AmountEstimated {
+			t.Error("a confirmed amount is still marked an estimate")
+		}
+		// Saying what it cost is not saying it was paid.
+		if got.Status != domain.OccurrencePending {
+			t.Errorf("recording the amount also settled the bill: %q", got.Status)
+		}
+		r := l.receiptFor(t, messageID)
+		if r.Executed != 1 {
+			t.Errorf("receipt: executed=%d, want exactly 1", r.Executed)
+		}
+		if len(r.Writes) == 1 && r.Writes[0].Capability != SetMonthAmountTool {
+			t.Errorf("the receipt names %v", r.Writes)
+		}
+	})
 }
 
 // onlyLiveID returns the id of the single live transaction, failing if

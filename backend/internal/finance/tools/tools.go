@@ -801,9 +801,13 @@ func (transactionCreate) Definition() chatdomain.ToolDefinition {
 					Type: chatdomain.TypeString,
 					Description: "Optional, YYYY-MM-DD. LEAVE IT OUT when the event is happening now or " +
 						"the user said \"hoje\" — the current date is then taken from the server, which " +
-						"is more reliable than a date you compose. Send it only for a day the user " +
-						"actually named, and read `today` from any Finance read to work out which " +
-						"date that is.",
+						"is more reliable than a date you compose. " +
+						"Send it only for a day the user actually named, including a relative one like " +
+						"\"ontem\" or \"sexta passada\", and work that day out by counting from the " +
+						"`today` field that finance.category.list returns — the same call you already " +
+						"make to choose a category. Every Finance read carries `today` for the same " +
+						"reason. NEVER compose this date from your own sense of the current date: you " +
+						"do not have one, and a date invented here files real money in the wrong week.",
 					MaxLength: 10,
 				},
 				"status": {
@@ -1207,6 +1211,9 @@ func (categoryList) Definition() chatdomain.ToolDefinition {
 			"recategorising anything: a transaction's category is required, and the " +
 			"income/expense direction is taken FROM the category rather than from a separate " +
 			"field. " +
+			"It also returns `today`, the current date read from the Finance clock. That is " +
+			"the ONLY date you may reason from: work out \"ontem\", \"anteontem\" or \"sexta " +
+			"passada\" by counting from it, never from a date you remember. " +
 			"The list is the whole vocabulary that exists — if nothing fits what the user " +
 			"described, say so and ask which category they want it under. Creating a new " +
 			"category is not among your capabilities, and picking a loosely-related one " +
@@ -1226,6 +1233,24 @@ func (categoryList) Definition() chatdomain.ToolDefinition {
 
 func (t categoryList) Execute(ctx context.Context, args map[string]any) (chatdomain.ToolOutput, error) {
 	ws, err := workspaceOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// ── Why a category listing asks what day it is ──────────────────────
+	// Because this is the call that PRECEDES almost every write. The model
+	// is told to pick a category before recording anything, so in a turn
+	// like "ontem gastei 90 no cinema" this is the only read that happens
+	// before finance.transaction.create — and without a date in its result
+	// the model reaches the write with no anchor at all. It then either
+	// omits occurred_on, filing yesterday's expense under today, or composes
+	// a date from its training, which is the failure period.go exists to
+	// prevent.
+	//
+	// The other reads have always carried `today`. That this one did not was
+	// a gap rather than a decision: nothing about listing categories made
+	// the date less necessary, it simply was not the read anybody was
+	// thinking about when the rule was written.
+	clk, err := t.clock(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1252,7 +1277,14 @@ func (t categoryList) Execute(ctx context.Context, args map[string]any) (chatdom
 			"type": string(c.Type),
 		})
 	}
-	out := map[string]any{"categories": rows}
+	// `today` is emitted even when the workspace has no category at all: the
+	// date is a fact about the clock, not about the list, and a turn that
+	// finds no category still needs to know what day the user means.
+	out := map[string]any{
+		"categories": rows,
+		"today":      clk.today().Format(dateLayout),
+		"time_zone":  clk.loc.String(),
+	}
 	if len(rows) == 0 {
 		out["note"] = "this workspace has no categories yet, so no transaction can be recorded. " +
 			"Tell the user they need to create at least one in the Finance screens."
