@@ -1,6 +1,7 @@
 # C.O.R.S.I.
 
-Sistema operacional pessoal. Operador único. Go + React. Em produção em `corsi.dev`.
+Sistema operacional pessoal. Operador único. Go + React. Roda localmente, sem ambiente
+de produção ativo.
 
 > A ferramenta que eu uso todo dia, não uma demo. Os limites documentados aqui são
 > limites reais, encontrados usando o sistema.
@@ -66,9 +67,10 @@ Integration → Platform
 ```
 
 Cada bounded context tem **schema e timeline de migration próprios**, com tabela de
-versão própria. Hoje são sete: `schema_migrations` (finance), `schema_migrations_chat`,
-`_releases`, `_github`, `_jobradar`, `_threads`, `_metathreads`. O entrypoint aplica
-todas no start e aborta se qualquer uma falhar. Forward-only em banco populado.
+versão própria. Hoje são nove: `schema_migrations` (finance), `schema_migrations_chat`,
+`_releases`, `_github`, `_jobradar`, `_threads`, `_metathreads`, `_palace` e
+`_telegram`. O entrypoint aplica todas no start e aborta se qualquer uma falhar.
+Forward-only em banco populado.
 
 Dinheiro é **`int64` de centavos** em toda camada, sem float e sem string parseável em
 lugar nenhum. Valor não tem sinal: a direção vem da categoria.
@@ -77,7 +79,7 @@ lugar nenhum. Valor não tem sinal: a direção vem da categoria.
 
 **Backend** Go 1.25 · chi v5 · pgx v5 · golang-migrate · Prometheus · OTel v1
 **Frontend** React 19 · TypeScript 6 · Vite 8 · Tailwind v4 · TanStack Query v5 · React Router v7
-**Infra** PostgreSQL 17 · Docker Compose (dev) · EasyPanel (prod)
+**Infra** PostgreSQL 17 · Docker Compose (dev)
 
 ## Setup
 
@@ -92,12 +94,15 @@ make -C backend ci-fast   # sem integração. NÃO é suficiente sozinho
 ```
 
 Configuração em [`backend/.env.example`](backend/.env.example) e
-[`frontend/.env.example`](frontend/.env.example). Os dois containers são
-construídos por `make build` e servidos atrás do mesmo upstream.
+[`frontend/.env.example`](frontend/.env.example). `make build` constrói as duas
+imagens Docker, `corsi-backend` e `corsi-frontend`.
 
 ## Estado atual
 
-**Em produção:** `corsi.dev` (frontend) e `api.corsi.dev` (backend).
+**Não há ambiente de produção.** O sistema roda localmente, e é assim que ele é usado
+todo dia. Versões anteriores deste README descreviam um deployment em `corsi.dev` e
+`api.corsi.dev`: esse ambiente não está ativo, e a afirmação ficou obsoleta sem que o
+texto acompanhasse.
 
 **Congelado por decisão, não quebrado:** a integração com a Meta Threads tem a fundação
 implementada — credencial OAuth cifrada por workspace, seis tools todas read-only — e a

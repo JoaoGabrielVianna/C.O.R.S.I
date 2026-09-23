@@ -10,19 +10,23 @@ Monolito modular. Go 1.25, arquitetura hexagonal, packed by feature.
 
 ## O que é
 
-Um binário HTTP (`cmd/corsi`) que monta **dois bounded contexts** e uma camada de plataforma
-compartilhada:
+Um binário HTTP (`cmd/corsi`) que monta **nove bounded contexts** e uma camada de plataforma
+compartilhada. Cada um tem schema e timeline de migration próprios: `finance`, `chat`,
+`releases`, `jobradar`, `threads`, `palace`, e as integrações `github`, `metathreads` e
+`telegram`.
+
+Os dois maiores:
 
 | Contexto | Prefixo | Rotas | Schema | Migrations |
 |---|---|---|---|---|
-| **finance** | `/finance` | 28 | `finance` | 8, tabela `schema_migrations` |
-| **chat** (domínio de produto: **Agents**) | `/chat` | 23 | `chat` | 6, tabela `schema_migrations_chat` |
+| **finance** | `/finance` | 28 | `finance` | 15, tabela `schema_migrations` |
+| **chat** (domínio de produto: **Agents**) | `/chat` | 23 | `chat` | 22, tabela `schema_migrations_chat` |
 
 O nome `chat` é histórico e **não deve ser renomeado**: o domínio de produto chama-se Agents,
 e o namespace de implementação continua `chat`.
 
-Mais três binários auxiliares: `cmd/migrate` (runner golang-migrate) e `cmd/swagger`
-(validador do spec).
+Mais três binários auxiliares: `cmd/migrate` (runner golang-migrate), `cmd/swagger`
+(validador do spec) e `cmd/telegramctl`.
 
 ---
 
@@ -130,7 +134,7 @@ re-wrap de envelope.
 Uma timeline por bounded context, com **tabela de versão própria**.
 
 ```bash
-make migrate-up            # aplica tudo (finance + chat)
+make migrate-up            # aplica as nove timelines
 make migrate-up-finance
 make migrate-up-chat
 make migrate-version       # imprime a versão de cada timeline
@@ -144,7 +148,7 @@ para outro lugar faria o golang-migrate ler um banco populado como versão 0.
 > com `-table`. Omitir faz o runner ler a tabela do `finance`, encontrar uma versão alta e
 > concluir que não há nada a aplicar.
 
-**Execução em produção:** `deploy/entrypoint.sh` aplica **as duas timelines** no start, uma
+**Execução no start do contêiner:** `deploy/entrypoint.sh` aplica **as nove timelines**, uma
 invocação por contexto. `set -e` está ativo e cada invocação é guardada, então uma migração
 que falha **mata o contêiner** em vez de servir um schema que ele não tem.
 
