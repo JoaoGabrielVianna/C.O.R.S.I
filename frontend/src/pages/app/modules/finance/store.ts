@@ -473,21 +473,43 @@ export function useFinance() {
   const updateRecurringMut = useUpdateRecurringEntry();
   const deleteRecurringMut = useDeleteRecurringEntry();
 
+  // ── Why these four return a Promise and no longer fire-and-forget ──
+  //
+  // Because `mutate()` reports failure nowhere a person can see. F8 proved
+  // the exact shape: the backend answered 400, the dialog closed, the
+  // operator was shown nothing, and the database kept the old values — a UI
+  // that VISUALLY IMPLIED SUCCESS while persistence had failed. That is
+  // worse than an error, because the operator walks away believing the
+  // record moved.
+  //
+  // `mutateAsync` hands the rejection to the caller, so the form can stay
+  // open, say what happened and keep what was typed. The callers are the
+  // only place that knows what a failure should look like on screen; the
+  // store's job is to stop hiding it.
   const addRecurringEntry = useCallback((input: Omit<RecurringEntry, "id">) => {
-    createRecurringMut.mutate({
+    return createRecurringMut.mutateAsync({
       description: input.description,
       amount: input.amount,
       categoryId: input.categoryId,
       personId: input.personId,
       dueDay: input.dueDay,
       recurrence: input.recurrence,
+      dueMonth: input.dueMonth,
+      amountVaries: input.amountVaries,
       notes: input.notes,
     });
-    return "";
   }, [createRecurringMut]);
 
-  const updateRecurringEntry = useCallback((id: string, patch: Partial<Omit<RecurringEntry, "id">>) => {
-    updateRecurringMut.mutate({
+  // `applyToPeriod` is a separate argument rather than part of the patch
+  // because it is not a property of the recurrence: it is an instruction
+  // about ONE month, and the backend refuses it for anything but the
+  // current, still-pending one.
+  const updateRecurringEntry = useCallback((
+    id: string,
+    patch: Partial<Omit<RecurringEntry, "id">>,
+    applyToPeriod?: string,
+  ) => {
+    return updateRecurringMut.mutateAsync({
       id,
       patch: {
         description: patch.description,
@@ -495,21 +517,28 @@ export function useFinance() {
         category_id: patch.categoryId,
         due_day: patch.dueDay,
         recurrence: patch.recurrence,
+        // An entry that is (or becomes) monthly must carry no due month,
+        // and the domain refuses one that does. Cleared explicitly so
+        // "omitted" can keep meaning "unchanged".
+        due_month: patch.recurrence === "annual" ? patch.dueMonth : undefined,
+        clear_due_month: patch.recurrence === "monthly" ? true : undefined,
+        amount_varies: patch.amountVaries,
         status: patch.status,
         notes: patch.notes,
+        apply_to_period: applyToPeriod,
       },
     });
   }, [updateRecurringMut]);
 
   const endRecurringEntry = useCallback((id: string, when: number = Date.now()) => {
-    updateRecurringMut.mutate({
+    return updateRecurringMut.mutateAsync({
       id,
       patch: { ends_at: new Date(when).toISOString(), status: "paused" },
     });
   }, [updateRecurringMut]);
 
   const removeRecurringEntry = useCallback((id: string) => {
-    deleteRecurringMut.mutate(id);
+    return deleteRecurringMut.mutateAsync(id);
   }, [deleteRecurringMut]);
 
   /* ── Accounts (bank-only; card accounts are derived) ─────────── */

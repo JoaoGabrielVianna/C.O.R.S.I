@@ -50,6 +50,8 @@ function fromApi(a: ApiRecurringEntry): RecurringEntry {
     personId: a.person_id ?? "",
     dueDay: a.due_day,
     recurrence: a.recurrence,
+    dueMonth: a.due_month ?? undefined,
+    amountVaries: a.amount_varies,
     status: a.status,
     startsAt: Date.parse(a.starts_at),
     endsAt: a.ends_at ? Date.parse(a.ends_at) : undefined,
@@ -82,16 +84,28 @@ export interface CreateRecurringEntryInput {
   personId?: string | null;
   dueDay: number;
   recurrence?: "monthly" | "annual";
+  /** Required when `recurrence` is annual; refused when it is monthly. */
+  dueMonth?: number;
+  amountVaries?: boolean;
   notes?: string;
 }
 
-/** Invalidates both reads: the list and the derived monthly total. */
+/**
+ * Invalidates every read a definition write can move.
+ *
+ * The list and the normalised monthly total, as before. And the MONTHLY
+ * COMMITMENT: an edit carrying `apply_to_period` changes a definition and
+ * a month in one transaction, and a screen showing both must not keep half
+ * of the old answer. The key is imported rather than re-spelled so a rename
+ * cannot leave this stale.
+ */
 function useInvalidate() {
   const qc = useQueryClient();
   return () => {
     const ws = getApiWorkspaceId();
     void qc.invalidateQueries({ queryKey: recurringEntriesRootKey(ws) });
     void qc.invalidateQueries({ queryKey: recurringSummaryKey(ws) });
+    void qc.invalidateQueries({ queryKey: ["finance", "monthly-commitment", ws] });
   };
 }
 
@@ -109,6 +123,10 @@ export function useCreateRecurringEntry(): UseMutationResult<
           person_id: input.personId && input.personId !== "" ? input.personId : null,
           due_day: input.dueDay,
           recurrence: input.recurrence,
+          // Sent only for an annual recurrence: the backend refuses a
+          // due_month on a monthly one, and the form never offers it there.
+          due_month: input.recurrence === "annual" ? input.dueMonth : undefined,
+          amount_varies: input.amountVaries,
           notes: input.notes,
         }),
       ),

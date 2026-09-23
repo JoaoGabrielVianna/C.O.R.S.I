@@ -27,6 +27,9 @@ export interface ApiRecurringEntry {
   person_id: string | null;
   due_day: number;
   recurrence: RecurringFrequencyWire;
+  /** 1..12, present only on an annual recurrence. */
+  due_month?: number | null;
+  amount_varies: boolean;
   status: RecurringStatusWire;
   starts_at: string;
   ends_at?: string | null;
@@ -42,6 +45,9 @@ export interface CreateRecurringEntryRequest {
   person_id?: string | null;
   due_day: number;
   recurrence?: RecurringFrequencyWire;
+  /** Required when `recurrence` is annual; refused when it is monthly. */
+  due_month?: number;
+  amount_varies?: boolean;
   starts_at?: string;
   notes?: string;
 }
@@ -54,7 +60,18 @@ export interface UpdateRecurringEntryRequest {
   clear_person_id?: boolean;
   due_day?: number;
   recurrence?: RecurringFrequencyWire;
+  due_month?: number;
+  clear_due_month?: boolean;
+  amount_varies?: boolean;
   status?: RecurringStatusWire;
+  /**
+   * Carries this edit into ONE already-materialised month, and only the
+   * CURRENT one while it is still pending. Omitted, the definition changes
+   * and no month that already exists is touched — which is the default and
+   * the reason history holds. The backend refuses a past month, a future
+   * month and a settled one.
+   */
+  apply_to_period?: string;
   ends_at?: string | null;
   clear_ends_at?: boolean;
   notes?: string;

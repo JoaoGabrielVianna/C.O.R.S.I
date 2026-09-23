@@ -12,7 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useT } from "@/lib/i18n";
+import { useT, useFormat } from "@/lib/i18n";
 import { CardsInvoices } from "./CardsInvoices";
 import { Categories } from "./Categories";
 import { RecurringEntries } from "./RecurringEntries";
@@ -23,8 +23,8 @@ import { PurchasePlansSection } from "./PurchasePlansSection";
 import { Transactions } from "./Transactions";
 import { TransactionModal } from "./TransactionModal";
 import { useFinance } from "./store";
+import { monthOptions, monthKeyToDate } from "./monthOptions";
 import type { FinanceTab, Transaction } from "./types";
-import { currentMonthKey } from "./types";
 
 /**
  * Finance — dense personal money command center (v0.0.0).
@@ -40,6 +40,7 @@ import { currentMonthKey } from "./types";
  */
 export function FinancePage() {
   const t = useT();
+  const fmt = useFormat();
   const store = useFinance();
   const [tab, setTab] = useState<FinanceTab>("overview");
   const [txModal, setTxModal] = useState<{ open: boolean; editing: Transaction | null }>({
@@ -50,11 +51,17 @@ export function FinancePage() {
   const labels = t.app.modules.finance;
   const overviewCtas = labels.overview.ctas;
 
-  const monthOptions = useMemo(() => {
-    const set = new Set<string>([currentMonthKey()]);
-    for (const tx of store.state.transactions) set.add(monthKey(tx.date));
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [store.state.transactions]);
+  // ── Why this is not built from the transactions any more ───────────
+  // Because a month with no spending in it is still a month with bills in
+  // it, and the Recurring tab is now about exactly those. See
+  // monthOptions.ts.
+  const months = useMemo(
+    () => monthOptions(
+      store.state.transactions.map((tx) => tx.date),
+      store.state.filters.month,
+    ),
+    [store.state.transactions, store.state.filters.month],
+  );
 
   return (
     <div className="flex flex-col gap-3 lg:h-[calc(100dvh-6.5rem)]">
@@ -92,8 +99,8 @@ export function FinancePage() {
             aria-label={overviewCtas.month}
             className="h-8 rounded-md border border-(--color-border) bg-(--color-card) px-2 text-[12px] text-(--color-foreground) outline-none focus:border-(--color-brand-500) focus:ring-2 focus:ring-(--color-brand-500)/20"
           >
-            {monthOptions.map((m) => (
-              <option key={m} value={m}>{formatMonthOption(m)}</option>
+            {months.map((m) => (
+              <option key={m} value={m}>{fmt.utcDate(monthKeyToDate(m), "monthYear")}</option>
             ))}
           </select>
           <button
@@ -195,14 +202,4 @@ function TabsRow({ tab, onChange }: { tab: FinanceTab; onChange: (next: FinanceT
       })}
     </div>
   );
-}
-
-function monthKey(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function formatMonthOption(key: string): string {
-  const [y, m] = key.split("-");
-  return `${m}/${y.slice(2)}`;
 }

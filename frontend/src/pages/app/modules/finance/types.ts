@@ -192,6 +192,26 @@ export type RecurringEntry = {
   personId: string;
   dueDay: number;              // 1-31
   recurrence: RecurringFrequency;
+  /**
+   * WHICH month an annual obligation falls in, 1..12. Absent on a monthly
+   * entry, required on an annual one.
+   *
+   * It is NOT derived from `startsAt`: that says when the definition began
+   * (the day somebody wrote it down), and this says when the money is due.
+   * An IPVA recorded in September is still due in January.
+   *
+   * Undefined on an annual entry means a row written before the column
+   * existed. The backend leaves it readable and INERT — it appears in no
+   * month — and reports it so a screen can ask for the missing month
+   * rather than inventing one.
+   */
+  dueMonth?: number;
+  /**
+   * The amount is not the same every time: an electricity bill, a card
+   * invoice. `amount` stays required and becomes the EXPECTED figure, and
+   * each month's real one is confirmed against the occurrence.
+   */
+  amountVaries?: boolean;
   status: "active" | "paused";
   /**
    * When the recurrence began. Required for new entries; legacy entries
