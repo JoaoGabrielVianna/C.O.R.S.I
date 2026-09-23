@@ -80,12 +80,33 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Route("/recurring-entries", func(r chi.Router) {
 		r.Post("/", h.createRecurringEntry)
 		r.Get("/", h.listRecurringEntries)
-		// /summary before /{id} so chi does not try to parse the word as a
-		// uuid — the same ordering /transactions/totals needs.
+		// /summary and /commitment before /{id} so chi does not try to
+		// parse either word as a uuid — the same ordering
+		// /transactions/totals needs.
+		//
+		// The two are DIFFERENT readings and are never summed: /summary
+		// answers "quanto sai por mês" and divides an annual entry by
+		// twelve; /commitment answers "o que tenho a pagar neste mês" and
+		// puts an annual entry's whole amount in its due month.
 		r.Get("/summary", h.getRecurringSummary)
+		r.Get("/commitment", h.getMonthlyCommitment)
 		r.Get("/{id}", h.getRecurringEntry)
 		r.Patch("/{id}", h.updateRecurringEntry)
 		r.Delete("/{id}", h.deleteRecurringEntry)
+
+		// One month of one obligation. No create, no delete, and no route
+		// that takes an occurrence's own id: materialisation belongs to
+		// the application service, and a month that happened does not stop
+		// having happened. See adapters/httpapi/recurringoccurrences.go.
+		//
+		// POST pays and DELETE unpays, rather than a PUT taking a boolean:
+		// a toggle's meaning depends on a state the caller cannot see, so
+		// a retried request would undo the first one.
+		r.Route("/{entryID}/occurrences/{period}", func(r chi.Router) {
+			r.Post("/pay", h.payOccurrence)
+			r.Delete("/pay", h.unpayOccurrence)
+			r.Patch("/", h.patchOccurrence)
+		})
 	})
 
 	r.Route("/purchase-plans", func(r chi.Router) {
