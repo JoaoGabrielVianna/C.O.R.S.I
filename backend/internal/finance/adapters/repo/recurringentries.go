@@ -24,13 +24,14 @@ func NewRecurringEntryRepo(pool *pgxpool.Pool) *RecurringEntryRepo {
 }
 
 const recurringCols = `id, workspace_id, description, amount_cents, category_id, person_id,
-                   due_day, recurrence, status, starts_at, ends_at, notes,
-                   created_at, updated_at, deleted_at`
+                   due_day, recurrence, due_month, status, amount_varies,
+                   starts_at, ends_at, notes, created_at, updated_at, deleted_at`
 
 func scanRecurring(row pgx.Row) (*domain.RecurringEntry, error) {
 	var f domain.RecurringEntry
 	if err := row.Scan(&f.ID, &f.WorkspaceID, &f.Description, &f.AmountCents, &f.CategoryID,
-		&f.PersonID, &f.DueDay, &f.Recurrence, &f.Status, &f.StartsAt, &f.EndsAt, &f.Notes,
+		&f.PersonID, &f.DueDay, &f.Recurrence, &f.DueMonth, &f.Status, &f.AmountVaries,
+		&f.StartsAt, &f.EndsAt, &f.Notes,
 		&f.CreatedAt, &f.UpdatedAt, &f.DeletedAt); err != nil {
 		return nil, err
 	}
@@ -40,12 +41,12 @@ func scanRecurring(row pgx.Row) (*domain.RecurringEntry, error) {
 func (r *RecurringEntryRepo) Create(ctx context.Context, f *domain.RecurringEntry) error {
 	q := `INSERT INTO finance.recurring_entries
 	      (id, workspace_id, description, amount_cents, category_id, person_id,
-	       due_day, recurrence, status, starts_at, ends_at, notes)
-	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	       due_day, recurrence, due_month, status, amount_varies, starts_at, ends_at, notes)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 	      RETURNING ` + recurringCols
 	row := postgres.Conn(ctx, r.pool).QueryRow(ctx, q,
 		f.ID, f.WorkspaceID, f.Description, f.AmountCents, f.CategoryID, f.PersonID,
-		f.DueDay, f.Recurrence, f.Status, f.StartsAt, f.EndsAt, f.Notes)
+		f.DueDay, f.Recurrence, f.DueMonth, f.Status, f.AmountVaries, f.StartsAt, f.EndsAt, f.Notes)
 	got, err := scanRecurring(row)
 	if err != nil {
 		return mapRecurringFK(err)
@@ -57,13 +58,15 @@ func (r *RecurringEntryRepo) Create(ctx context.Context, f *domain.RecurringEntr
 func (r *RecurringEntryRepo) Update(ctx context.Context, f *domain.RecurringEntry) error {
 	q := `UPDATE finance.recurring_entries
 	      SET description = $3, amount_cents = $4, category_id = $5, person_id = $6,
-	          due_day = $7, recurrence = $8, status = $9, starts_at = $10,
-	          ends_at = $11, notes = $12, updated_at = now()
+	          due_day = $7, recurrence = $8, due_month = $9, status = $10,
+	          amount_varies = $11, starts_at = $12,
+	          ends_at = $13, notes = $14, updated_at = now()
 	      WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
 	      RETURNING ` + recurringCols
 	row := postgres.Conn(ctx, r.pool).QueryRow(ctx, q,
 		f.ID, f.WorkspaceID, f.Description, f.AmountCents, f.CategoryID, f.PersonID,
-		f.DueDay, f.Recurrence, f.Status, f.StartsAt, f.EndsAt, f.Notes)
+		f.DueDay, f.Recurrence, f.DueMonth, f.Status, f.AmountVaries,
+		f.StartsAt, f.EndsAt, f.Notes)
 	got, err := scanRecurring(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

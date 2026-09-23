@@ -243,6 +243,94 @@ type RecurringEntryRepo interface {
 	List(ctx context.Context, workspaceID uuid.UUID, f RecurringEntryFilter) ([]domain.RecurringEntry, error)
 }
 
+/* ── recurring occurrences ───────────────────────────────────────────── */
+
+// RecurringOccurrenceRepo stores one month of a recurring entry.
+//
+// ── What is deliberately NOT here ──────────────────────────────────────
+// No Create, and no Delete.
+//
+// There is no Create because an occurrence is never created one at a time
+// by a caller that decided to: it is MATERIALISED, which is EnsureMissing,
+// and the difference is the whole concurrency design. A Create would be an
+// insert that can fail on a unique violation, and every caller would then
+// need its own idea of what to do about that.
+//
+// There is no Delete because a month that happened does not stop having
+// happened. An entry that should never have existed is soft-deleted at the
+// definition, and ListByPeriod stops returning its months because it joins
+// through it.
+type RecurringOccurrenceRepo interface {
+	// ListByPeriod returns this workspace's occurrences in one month, in
+	// due order.
+	//
+	// It joins through the definition and skips soft-deleted ones, so a
+	// recurrence the operator removed takes its months out of every reading
+	// without any caller remembering to filter.
+	ListByPeriod(ctx context.Context, workspaceID uuid.UUID, p domain.Period) ([]domain.RecurringOccurrence, error)
+
+	// EnsureMissing is the materialisation primitive.
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	//	INSERT WHAT IS ABSENT; NEVER TOUCH WHAT IS PRESENT
+	//
+	// ══════════════════════════════════════════════════════════════════
+	//
+	// It inserts every occurrence it is given whose (entry, period) is not
+	// already taken, and does NOTHING to the ones that are. It returns how
+	// many rows it actually created.
+	//
+	// ── Why "do nothing" and not "upsert" ──────────────────────────────
+	// Because an existing occurrence is historical truth and the values
+	// being offered are derived from the definition AS IT STANDS NOW. An
+	// upsert would rewrite September's amount every time somebody opened
+	// September after a price rise, which is precisely the silent
+	// historical rewrite this whole design exists to prevent. The conflict
+	// is not a problem to resolve; it is the answer.
+	//
+	// ── Why this is safe to call concurrently ──────────────────────────
+	// Two readers opening the same month at the same instant will both
+	// decide the rent is missing and both insert. The unique index on
+	// (recurring_entry_id, period) makes the second one a no-op. No lock,
+	// no queue, no scheduler, and no window in which a duplicate exists.
+	EnsureMissing(ctx context.Context, occ []domain.RecurringOccurrence) (created int, err error)
+
+	// FindByEntryPeriod resolves one month of one definition, which is how
+	// a write addresses an occurrence: by what it IS, not by an id a caller
+	// would have to be holding.
+	FindByEntryPeriod(ctx context.Context, workspaceID, entryID uuid.UUID, p domain.Period) (*domain.RecurringOccurrence, error)
+
+	// Update writes the mutable part of one occurrence: its amount,
+	// whether that amount is still an estimate, its paid state and its
+	// future transaction link.
+	//
+	// Period and due_on are NOT among them. They are the row's identity
+	// and its frozen due date, and the statement does not list them, so no
+	// caller can move a month by handing over a modified struct.
+	Update(ctx context.Context, o *domain.RecurringOccurrence) error
+
+	// ApplyDefinition carries an edited recurrence into ONE month, and is
+	// the only way a due date ever moves.
+	//
+	// ── Why this is a second method and not a flag on Update ───────────
+	// Because Update's refusal to touch `due_on` is load-bearing: it is
+	// what makes a mangled struct, or a handler that copied a request body
+	// over a loaded row, unable to move a frozen due date. A flag would
+	// hand that decision back to every caller, and the guard would then be
+	// worth exactly as much as the discipline of the next person to add
+	// one.
+	//
+	// So the legitimate mover is a method whose NAME says what it is for
+	// and which has one caller, behind the gate that has already checked
+	// the period is the current one. It carries a second, independent
+	// guard of its own: the statement only matches a PENDING row, so even
+	// a future caller that forgot to check cannot rewrite a settled month.
+	//
+	// It still does not list `period`, so it cannot move a month.
+	ApplyDefinition(ctx context.Context, o *domain.RecurringOccurrence) error
+}
+
 // ── Statement import ───────────────────────────────────────────────────
 
 // ImportBatchRepo persists the staging area. Nothing it writes is visible
