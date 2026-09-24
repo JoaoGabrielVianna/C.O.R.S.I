@@ -252,7 +252,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 	// One entry per timeline the entrypoint applies. Adding a module means
 	// adding it here, and forgetting to reproduces that outage: the migration
 	// files are all correct and the schema is simply never created.
-	for _, s := range []string{"finance", "chat", "releases", "github", "telegram"} {
+	for _, s := range []string{"finance", "chat", "releases", "github", "telegram", "identity"} {
 		if !schemaExists(t, conn, s) {
 			t.Errorf("schema %q does not exist after the entrypoint migration stage", s)
 		}
@@ -365,9 +365,24 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		"public.schema_migrations_metathreads",
 		"public.schema_migrations_palace",
 		"public.schema_migrations_telegram",
+		"public.schema_migrations_identity",
 	} {
 		if !relationExists(t, conn, table) {
 			t.Fatalf("version table `%s` missing — that module was migrated without -table", table)
+		}
+	}
+
+	// --- identity is present ------------------------------------------
+	// Sessions and nothing else. There is deliberately no users table and
+	// no password column: the one credential is environment
+	// (AUTH_EMAIL + AUTH_PASSWORD_HASH), so a dump of this database
+	// authenticates nobody.
+	if !relationExists(t, conn, "identity.sessions") {
+		t.Errorf("relation %q missing", "identity.sessions")
+	}
+	for _, rel := range []string{"identity.users", "identity.credentials"} {
+		if relationExists(t, conn, rel) {
+			t.Errorf("relation %q exists — identity stores sessions, never a credential", rel)
 		}
 	}
 

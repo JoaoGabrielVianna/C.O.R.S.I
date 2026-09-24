@@ -7,8 +7,12 @@
 // Each platform sub-package owns its own typed Config struct; this package
 // composes them so the env parser populates the whole tree in one pass.
 //
-// Auth deliberately lives outside this repo (see README): there is no
-// AUTH_* configuration here.
+// ── AUTH_* used to be absent from here, and the note said so ───────────
+// It said auth lived outside this repo, in a service that was never built.
+// It is here now: `identity.Config` carries the one operator's address and
+// an argon2id VERIFIER — never a password, which is not configuration and
+// never touches this process except inside the login request that submits
+// it.
 package config
 
 import (
@@ -17,6 +21,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 
+	"github.com/corsi/backend/internal/platform/identity"
 	"github.com/corsi/backend/internal/platform/logger"
 	"github.com/corsi/backend/internal/platform/observability"
 	"github.com/corsi/backend/internal/platform/postgres"
@@ -31,6 +36,7 @@ type Config struct {
 	Observability observability.Config
 	Workspace     workspace.Config
 	Secrets       secrets.Config
+	Identity      identity.Config
 	Modules       Modules
 }
 

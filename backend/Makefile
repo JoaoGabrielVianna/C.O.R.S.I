@@ -85,8 +85,9 @@ THREADS_MIGRATE_TABLE := schema_migrations_threads
 METATHREADS_MIGRATE_TABLE := schema_migrations_metathreads
 PALACE_MIGRATE_TABLE := schema_migrations_palace
 TELEGRAM_MIGRATE_TABLE := schema_migrations_telegram
+IDENTITY_MIGRATE_TABLE := schema_migrations_identity
 
-migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads migrate-up-palace migrate-up-telegram ## apply pending migrations (all modules)
+migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads migrate-up-palace migrate-up-telegram migrate-up-identity ## apply pending migrations (all modules)
 
 migrate-up-finance: ## apply pending finance migrations
 	$(MIGRATE) -dir migrations/finance up
@@ -124,6 +125,13 @@ migrate-up-palace: ## apply pending palace migrations
 # migrations/telegram/0001_init.up.sql.
 migrate-up-telegram: ## apply pending telegram integration migrations
 	$(MIGRATE) -dir migrations/telegram -table $(TELEGRAM_MIGRATE_TABLE) up
+
+# Identity, the platform capability that authenticates the one operator.
+# Sessions only: no user row and no password column, because the credential
+# is environment and never data. See the header of
+# migrations/identity/0001_init.up.sql.
+migrate-up-identity: ## apply pending identity migrations
+	$(MIGRATE) -dir migrations/identity -table $(IDENTITY_MIGRATE_TABLE) up
 
 migrate-down: ## revert one finance migration
 	$(MIGRATE) -dir migrations/finance -step 1 down

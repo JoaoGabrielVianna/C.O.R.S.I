@@ -26,6 +26,7 @@ import (
 	"github.com/corsi/backend/internal/platform/config"
 	"github.com/corsi/backend/internal/platform/health"
 	"github.com/corsi/backend/internal/platform/httpserver"
+	"github.com/corsi/backend/internal/platform/identity"
 	"github.com/corsi/backend/internal/platform/logger"
 	"github.com/corsi/backend/internal/platform/metrics"
 	"github.com/corsi/backend/internal/platform/observability"
@@ -82,6 +83,32 @@ func run() error {
 	// HTTP metrics must be registered before any routes are mounted so chi
 	// runs it for every handler. The middleware skips /metrics itself.
 	router.Use(reg.HTTPMiddleware())
+
+	// ── Identity, and why it is registered HERE ─────────────────────
+	//
+	// Before a single route is mounted, so chi runs it for every handler
+	// in the product. Authentication is default-DENY: a module added later
+	// is protected because nobody had to remember to protect it, and the
+	// only addresses that answer without a session are the four in
+	// identity.PublicPaths, each justified where it is listed.
+	//
+	// It sits ABOVE the workspace middleware, which every module applies
+	// inside its own Route. The two answer different questions — identity
+	// says WHO, workspace says WHICH TENANT — and the header that answers
+	// the second was never able to answer the first: it accepts any
+	// syntactically valid UUID and the frontend sends a public constant.
+	//
+	// A missing credential fails the boot rather than disabling the gate.
+	// There is no AUTH_ENABLED, on purpose: a switch is the shape of the
+	// defect this deployment already paid for once, where a value absent
+	// from the orchestrator's stored spec produced a healthy process with
+	// a silently missing capability.
+	identitySvc, err := identity.New(cfg.Identity, identity.NewPostgresStore(pool), log, nil)
+	if err != nil {
+		return err
+	}
+	router.Use(identitySvc.Middleware())
+	identitySvc.Register(router)
 
 	router.Mount("/health", health.Handler(pool))
 	router.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
