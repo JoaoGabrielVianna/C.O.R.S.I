@@ -21,6 +21,7 @@ import { LanguageSwitcher } from "@/components/ui/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { useT } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
+import { ApiError } from "@/lib/api/client";
 import { safeReturnTo } from "@/lib/auth/returnTo";
 
 /**
@@ -74,9 +75,18 @@ export function LoginPage() {
       await signIn(email, password);
       setState("success");
       window.setTimeout(() => navigate(returnTo, { replace: true }), 600);
-    } catch {
+    } catch (err) {
       setState("idle");
-      setError(t.auth.errors.empty);
+      // ONE message for every way of not getting in. The backend answers
+      // `invalid_credentials` whether the address or the password was
+      // wrong, and this screen must not undo that by saying more than the
+      // API did. Only the rate limit gets its own wording, because
+      // "wrong credentials" would be a lie when the credentials were never
+      // checked.
+      const code = err instanceof ApiError ? err.code : "";
+      if (code === "too_many_attempts") setError(t.auth.errors.rateLimited);
+      else if (code === "invalid_credentials") setError(t.auth.errors.invalidCredentials);
+      else setError(t.auth.errors.unavailable);
     }
   };
 

@@ -231,6 +231,12 @@ export const en: Translations = {
       empty: "Fill in all fields to continue.",
       emailInvalid: "Invalid email format.",
       passwordShort: "Password must be at least 6 characters.",
+      // One message for a wrong credential, deliberately: the backend
+      // answers `invalid_credentials` without saying which half failed,
+      // and this screen must not undo that.
+      invalidCredentials: "Invalid credentials.",
+      rateLimited: "Too many attempts. Wait a few minutes.",
+      unavailable: "Could not sign in right now. Try again.",
     },
     legal: "TLS 1.3 · encrypted session",
   },
@@ -250,6 +256,7 @@ export const en: Translations = {
       settings: "Settings",
       signOut: "Sign out",
       providerMock: "mock",
+      providerSession: "session",
     },
     releases: {
       eyebrow: "Platform",
@@ -1887,6 +1894,7 @@ export const en: Translations = {
         providerLabels: {
           mock: "Mock · local session",
           keycloak: "Keycloak",
+          session: "Session · server cookie",
         },
         fields: {
           name: "Name",

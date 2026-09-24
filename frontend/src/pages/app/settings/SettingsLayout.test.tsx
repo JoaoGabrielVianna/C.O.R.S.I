@@ -6,7 +6,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { I18nFixture } from "@/lib/i18n";
-import { AuthProvider } from "@/lib/auth";
+import { AuthFixture } from "@/lib/auth/AuthFixture";
 import { ThemeProvider } from "@/lib/theme";
 import { SettingsLayout } from "./SettingsLayout";
 import { ProfileSettingsPage } from "./Profile";
@@ -43,7 +43,7 @@ function renderAt(path: string) {
           {/* Preferences renders the real ThemeToggle and LanguageSwitcher,
               which read their providers. */}
           <ThemeProvider>
-            <AuthProvider>
+            <AuthFixture>
               <Routes>
                 <Route path="/app/settings" element={<SettingsLayout />}>
                   <Route index element={<Navigate to="profile" replace />} />
@@ -54,7 +54,7 @@ function renderAt(path: string) {
                   <Route path="security" element={<SecuritySettingsPage />} />
                 </Route>
               </Routes>
-            </AuthProvider>
+            </AuthFixture>
           </ThemeProvider>
         </I18nFixture>
       </MemoryRouter>
@@ -70,23 +70,6 @@ const SECTIONS: ReadonlyArray<readonly [string, string]> = [
   ["Segurança", "/app/settings/security"],
 ];
 
-/**
- * `AuthProvider` reads its session during `useState` initialisation, so an
- * unseeded test renders the signed-out placeholder and Profile has no
- * identity to show.
- */
-function seedSession() {
-  window.localStorage.setItem(
-    "corsi.session",
-    JSON.stringify({
-      id: "u_joao_corsi",
-      email: "joao@corsi.dev",
-      name: "João Corsi",
-      roles: ["operator"],
-      provider: "mock",
-    }),
-  );
-}
 
 /**
  * jsdom ships no `matchMedia`, and `ThemeProvider` asks it about
@@ -114,7 +97,6 @@ function stubMatchMedia() {
 
 beforeEach(() => {
   window.localStorage.clear();
-  seedSession();
   stubMatchMedia();
 });
 afterEach(() => {
@@ -206,7 +188,7 @@ describe("settings · Profile no longer invents facts", () => {
   it("carries the identity the deleted /app/account page used to hold", () => {
     renderAt("/app/settings/profile");
     expect(screen.getByText("operator")).toBeDefined();
-    expect(screen.getByText("Mock · sessão local")).toBeDefined();
+    expect(screen.getByText("Sessão · cookie do servidor")).toBeDefined();
     expect(screen.getByText("Autenticado")).toBeDefined();
   });
 });

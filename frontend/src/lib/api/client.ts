@@ -7,12 +7,22 @@
  * handling sees a consistent shape.
  *
  * Base URL is env-driven via `VITE_API_URL`:
- *   - empty (default) → relative paths → Vite dev proxy locally, same-origin
- *     in any reverse-proxied production setup.
- *   - absolute (e.g. https://api.corsi.dev) → cross-origin requests when
- *     the frontend and backend are deployed on different hosts.
+ *   - empty (default) → relative paths → Vite dev proxy locally.
+ *   - a path prefix (production: `/api`) → same-origin, reverse-proxied by
+ *     the frontend's own nginx to the backend. This is what production
+ *     runs, and it is what lets the session cookie be same-site.
  * The value is baked into the bundle at `npm run build` time; rebuild the
  * image to change it.
+ *
+ * ── Authentication ─────────────────────────────────────────────────────
+ * Every request carries the session cookie and nothing else. The cookie is
+ * HttpOnly, so no code here can read it, attach it by hand, or log it —
+ * `credentials` is the entire client-side surface of authentication.
+ *
+ * A 401 from any call means the session ended: expired, revoked by a logout
+ * in another tab, or never established. `onUnauthorized` lets the auth
+ * provider hear that once, centrally, instead of every screen inventing its
+ * own handling for a state that is not its business.
  */
 
 import { getApiWorkspaceId } from "./workspace";
@@ -71,7 +81,16 @@ export async function apiFetch<T>(
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, headers, signal });
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers,
+      signal,
+      // Explicit rather than relying on the default. Production is
+      // same-origin so "same-origin" would suffice, but the value that is
+      // written down is the value that survives someone pointing
+      // VITE_API_URL at another host.
+      credentials: init.credentials ?? "include",
+    });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       // Distinguish caller cancellation from timeout. If the caller's own
@@ -113,9 +132,48 @@ export async function apiFetch<T>(
       data && typeof data === "object" && data !== null && "error" in data
         ? (data as ApiErrorBody)
         : null;
+    // The session ended. Announced before the error is thrown so the auth
+    // provider has already flipped to unauthenticated by the time the
+    // caller's own catch runs.
+    //
+    // `/auth/login` is excluded deliberately: a wrong password is a 401 and
+    // is NOT a lapsed session. Without this exclusion a failed login would
+    // broadcast "logged out" to a provider that was never logged in, which
+    // is harmless today and is the kind of loop that stops being harmless
+    // the moment the handler does anything more than set state.
+    if (res.status === 401 && !path.startsWith("/auth/login")) {
+      notifyUnauthorized();
+    }
     throw new ApiError(res.status, body, res.statusText);
   }
   return data as T;
+}
+
+/* ── the 401 channel ─────────────────────────────────────────────────── */
+
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+/**
+ * Registers a listener for "the session is gone", and returns the
+ * unsubscribe function — the shape `useEffect` expects, so a component can
+ * return it directly.
+ */
+export function onUnauthorized(fn: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(fn);
+  return () => {
+    unauthorizedListeners.delete(fn);
+  };
+}
+
+function notifyUnauthorized(): void {
+  for (const fn of unauthorizedListeners) {
+    try {
+      fn();
+    } catch {
+      /* a listener that throws must not break the request that found out */
+    }
+  }
 }
 
 /**

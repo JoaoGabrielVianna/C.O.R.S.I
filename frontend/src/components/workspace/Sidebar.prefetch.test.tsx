@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { I18nFixture } from "@/lib/i18n";
-import { AuthProvider } from "@/lib/auth";
+import { AuthFixture } from "@/lib/auth/AuthFixture";
 import { WorkspaceProvider } from "@/lib/workspace";
 import { stubViewport, VIEWPORTS } from "@/lib/workspace/testing";
 
@@ -51,7 +51,7 @@ function renderSidebar() {
   return render(
     <MemoryRouter initialEntries={["/app/modules/agents"]}>
       <I18nFixture lang="pt">
-        <AuthProvider>
+        <AuthFixture>
           <WorkspaceProvider>
             <Sidebar />
             <LocationProbe />
@@ -59,7 +59,7 @@ function renderSidebar() {
               <Route path="*" element={null} />
             </Routes>
           </WorkspaceProvider>
-        </AuthProvider>
+        </AuthFixture>
       </I18nFixture>
     </MemoryRouter>,
   );

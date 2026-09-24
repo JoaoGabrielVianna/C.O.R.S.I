@@ -235,6 +235,12 @@ async function streamTurn(
     },
     body: JSON.stringify(body),
     signal,
+    // The session cookie, same as apiFetch. This reader drives fetch
+    // directly so it can consume the body incrementally, which means every
+    // cross-cutting concern apiFetch applies has to be repeated here — and
+    // an authenticated API makes forgetting this one a stream that 401s
+    // while every other screen works.
+    credentials: "include",
   });
 
   if (!res.ok) {

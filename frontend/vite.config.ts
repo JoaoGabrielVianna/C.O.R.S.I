@@ -37,6 +37,11 @@ const API_PREFIXES = [
   // third time: the Library rendered "não foi possível carregar" while
   // the backend served the routes correctly.
   '/palace',
+  // Authentication. Missing it would make `npm run dev` unable to log in
+  // at all — the login POST would receive index.html — which is the same
+  // drift that cost Releases, Job Radar and Palace, on the one prefix
+  // whose absence locks the whole app.
+  '/auth',
   '/health',
   '/metrics',
   '/openapi.yaml',

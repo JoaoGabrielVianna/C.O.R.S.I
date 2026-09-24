@@ -55,7 +55,7 @@ type Props = {
 export function AccountMenuPanel({ className, onNavigate }: Props) {
   const t = useT();
   const navigate = useNavigate();
-  const { user, provider, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const items = useAccountMenuItems();
 
   const handleSignOut = async () => {
@@ -82,7 +82,7 @@ export function AccountMenuPanel({ className, onNavigate }: Props) {
           {user?.email ?? "—"}
         </p>
         <p className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-(--color-muted-foreground)">
-          {provider === "keycloak" ? "Keycloak" : t.app.user.providerMock}
+          {t.app.user.providerSession}
         </p>
       </div>
 

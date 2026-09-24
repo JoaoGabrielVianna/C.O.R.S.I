@@ -238,6 +238,12 @@ export const pt = {
       empty: "Preencha todos os campos para continuar.",
       emailInvalid: "Formato de e-mail inválido.",
       passwordShort: "Senha precisa ter pelo menos 6 caracteres.",
+      // Uma mensagem só para credencial errada, de propósito: o backend
+      // responde `invalid_credentials` sem dizer qual metade falhou, e
+      // esta tela não pode desfazer isso.
+      invalidCredentials: "Credenciais inválidas.",
+      rateLimited: "Tentativas demais. Aguarde alguns minutos.",
+      unavailable: "Não foi possível acessar agora. Tente de novo.",
     },
     legal: "TLS 1.3 · sessão criptografada",
   },
@@ -258,6 +264,9 @@ export const pt = {
       settings: "Configurações",
       signOut: "Sair",
       providerMock: "mock",
+      // O rótulo do mecanismo de sessão real. `providerMock` sobrevive
+      // porque a baseline de copy hardcoded ainda o referencia.
+      providerSession: "sessão",
     },
     releases: {
       eyebrow: "Plataforma",
@@ -1896,6 +1905,7 @@ export const pt = {
         providerLabels: {
           mock: "Mock · sessão local",
           keycloak: "Keycloak",
+          session: "Sessão · cookie do servidor",
         },
         fields: {
           name: "Nome",

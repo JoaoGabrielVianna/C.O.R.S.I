@@ -311,7 +311,7 @@ function SidebarFooter({
   onToggle: () => void;
 }) {
   const t = useT();
-  const { user, provider } = useAuth();
+  const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -393,11 +393,11 @@ function SidebarFooter({
               aria-hidden
               className={cn(
                 "size-1.5 rounded-full",
-                provider === "keycloak" ? "bg-emerald-400" : "bg-amber-400",
+                "bg-emerald-400",
               )}
             />
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-(--color-muted-foreground)">
-              {provider === "keycloak" ? "Keycloak" : t.app.user.providerMock}
+              {t.app.user.providerSession}
             </span>
           </span>
           <button

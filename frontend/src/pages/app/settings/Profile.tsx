@@ -24,11 +24,13 @@ import { useT } from "@/lib/i18n";
  */
 export function ProfileSettingsPage() {
   const t = useT();
-  const { user, isAuthenticated, provider } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const p = t.app.settings.profile;
 
-  const providerLabel =
-    provider === "keycloak" ? p.providerLabels.keycloak : p.providerLabels.mock;
+  // One provider, and it is real. The amber "mock" badge this used to be
+  // able to draw would now be a lie: the session is a server-issued
+  // HttpOnly cookie, not a localStorage flag.
+  const providerLabel = p.providerLabels.session;
 
   return (
     <SettingsPanel title={p.title} description={p.description}>
@@ -49,11 +51,7 @@ export function ProfileSettingsPage() {
       </SettingsRow>
       <SettingsRow label={p.provider}>
         <div className="flex items-center gap-2">
-          {provider === "keycloak" ? (
-            <Badge variant="success" size="sm">{t.app.common.shared.live}</Badge>
-          ) : (
-            <Badge variant="warning" size="sm">{t.app.common.mock}</Badge>
-          )}
+          <Badge variant="success" size="sm">{t.app.common.shared.live}</Badge>
           <span className="font-mono text-[12px] text-(--color-muted-foreground)">
             {providerLabel}
           </span>

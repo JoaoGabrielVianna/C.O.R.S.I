@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { I18nFixture } from "@/lib/i18n";
-import { AuthProvider } from "@/lib/auth";
+import { AuthFixture } from "@/lib/auth/AuthFixture";
 import { WorkspaceProvider, useWorkspace } from "@/lib/workspace";
 import { stubViewport, resizeViewport, VIEWPORTS } from "@/lib/workspace/testing";
 import { Sidebar } from "./Sidebar";
@@ -36,25 +36,13 @@ import { Sidebar } from "./Sidebar";
  */
 
 const COLLAPSED_KEY = "corsi.workspace.sidebar.collapsed";
-const SESSION_KEY = "corsi.session";
 
 /**
- * `AuthProvider` reads its session from storage during `useState`
- * initialisation, so an unseeded test renders the signed-out placeholder
- * and the user block has no name to assert on.
+ * The signed-in shell arrives through `AuthFixture` rather than a seeded
+ * storage key. The session is a server-issued cookie now, so there is no
+ * longer a blob a test can write to forge one — and this file's subject is
+ * the sidebar's layout, not how a login happens.
  */
-function seedSession() {
-  window.localStorage.setItem(
-    SESSION_KEY,
-    JSON.stringify({
-      id: "u_joao_corsi",
-      email: "joao@corsi.dev",
-      name: "João Corsi",
-      roles: ["operator"],
-      provider: "mock",
-    }),
-  );
-}
 
 /**
  * Opens the drawer through the workspace context rather than the header's
@@ -76,12 +64,12 @@ function renderShell() {
   return render(
     <MemoryRouter initialEntries={["/app/modules/agents"]}>
       <I18nFixture lang="pt">
-        <AuthProvider>
+        <AuthFixture>
           <WorkspaceProvider>
             <DrawerTrigger />
             <Sidebar />
           </WorkspaceProvider>
-        </AuthProvider>
+        </AuthFixture>
       </I18nFixture>
     </MemoryRouter>,
   );
@@ -92,7 +80,6 @@ const VISIBLE_MODULES = ["Job Radar", "Agents"];
 
 beforeEach(() => {
   window.localStorage.clear();
-  seedSession();
   stubViewport(VIEWPORTS.desktopWide);
 });
 
