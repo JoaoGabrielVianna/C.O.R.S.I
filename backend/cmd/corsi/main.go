@@ -16,6 +16,7 @@ import (
 
 	"github.com/corsi/backend/api/openapi"
 	"github.com/corsi/backend/internal/chat"
+	"github.com/corsi/backend/internal/closet"
 	"github.com/corsi/backend/internal/finance"
 	githubint "github.com/corsi/backend/internal/integrations/github"
 	"github.com/corsi/backend/internal/integrations/metathreads"
@@ -289,6 +290,31 @@ func run() error {
 	// than a capability does. Neither knows about the other, and both reach
 	// the same application service.
 	palaceMod.Register(router)
+
+	// Closet. A MODULE, like Job Radar, Threads and Palace: it owns its own
+	// entities and its own schema, and it talks to no external system.
+	//
+	// It is the first module wired here that hands over NO capabilities —
+	// there is no `closetMod.Tools()` line below, and its absence is a
+	// decision rather than an omission. This sprint builds the wardrobe; the
+	// stylist that would read it is a separate piece of work, and shipping
+	// capabilities for an agent that does not exist would put entries in the
+	// catalogue that the operator has to reason about and cannot usefully
+	// revoke. The seam is the same one every other module uses, and adding
+	// it later costs a `tools` subpackage and one line here.
+	//
+	// ── The one thing this module stores that no other does ─────────
+	// Image bytes, in `closet.assets`. That is unusual and it is argued in
+	// full at the top of migrations/closet/0001_init.up.sql; the short
+	// version is that this deployment has no object storage, an ephemeral
+	// container filesystem, and a database backup that has actually been
+	// restored. `ports.AssetStore` is the exit when one of those changes.
+	closetMod := closet.New(closet.Deps{
+		Pool:                pool,
+		Logger:              log,
+		WorkspaceMiddleware: wsMiddleware,
+	})
+	closetMod.Register(router)
 
 	// The catalogue is the concatenation of what every capability owner
 	// offers. Order is irrelevant — the registry sorts by name — and a

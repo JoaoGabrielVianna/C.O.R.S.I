@@ -252,7 +252,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 	// One entry per timeline the entrypoint applies. Adding a module means
 	// adding it here, and forgetting to reproduces that outage: the migration
 	// files are all correct and the schema is simply never created.
-	for _, s := range []string{"finance", "chat", "releases", "github", "telegram", "identity"} {
+	for _, s := range []string{"finance", "chat", "releases", "github", "telegram", "identity", "closet"} {
 		if !schemaExists(t, conn, s) {
 			t.Errorf("schema %q does not exist after the entrypoint migration stage", s)
 		}
@@ -343,6 +343,24 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		}
 	}
 
+	// --- closet is present --------------------------------------------
+	// `closet.assets` is the one table in this product that holds FILE
+	// BYTES. Its absence after a deploy would not be a missing feature — it
+	// would be a wardrobe with no photographs and nothing anywhere to
+	// re-derive them from, because a cut-out PNG is made outside this
+	// system and uploaded once.
+	for _, rel := range []string{
+		"closet.items",
+		"closet.item_images",
+		"closet.assets",
+		"closet.looks",
+		"closet.look_items",
+	} {
+		if !relationExists(t, conn, rel) {
+			t.Errorf("relation %q missing", rel)
+		}
+	}
+
 	// --- bookkeeping is independent -----------------------------------
 	// This is the assertion that pins the `-table` flag. Migrating chat
 	// without it would leave `schema_migrations_chat` absent and silently
@@ -366,6 +384,7 @@ func TestEntrypointMigratesEveryBoundedContext(t *testing.T) {
 		"public.schema_migrations_palace",
 		"public.schema_migrations_telegram",
 		"public.schema_migrations_identity",
+		"public.schema_migrations_closet",
 	} {
 		if !relationExists(t, conn, table) {
 			t.Fatalf("version table `%s` missing — that module was migrated without -table", table)

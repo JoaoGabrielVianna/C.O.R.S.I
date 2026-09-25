@@ -74,6 +74,13 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
   "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/telegram" -table schema_migrations_telegram up \
     || { echo "entrypoint: telegram migrations failed" >&2; exit 1; }
 
+  # Closet, the operator's wardrobe. Its `assets` table holds image BYTES,
+  # which is why this schema is the one whose loss is not recoverable from
+  # anywhere else in the system — nothing re-derives a cut-out PNG. See the
+  # header of migrations/closet/0001_init.up.sql.
+  "${MIGRATE_BIN}" -dsn "${POSTGRES_DSN}" -dir "${MIGRATIONS_DIR}/closet" -table schema_migrations_closet up \
+    || { echo "entrypoint: closet migrations failed" >&2; exit 1; }
+
   # Identity, the platform capability that authenticates the one operator.
   # Sessions only: there is no user row and no password column, because the
   # credential is environment (AUTH_EMAIL + AUTH_PASSWORD_HASH) and never

@@ -14,7 +14,7 @@ BACKUPS_DIR  ?= backups
 
 MODULE ?= finance
 
-.PHONY: help up down logs ps build run test test-integration test-integration-isolated tidy fmt vet lint migrate-up migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-palace migrate-up-telegram migrate-down migrate-down-chat migrate-down-releases migrate-down-github migrate-down-jobradar migrate-down-palace migrate-down-telegram migrate-version migrate-create openapi-gen swagger ci ci-fast backup restore
+.PHONY: help up down logs ps build run test test-integration test-integration-isolated tidy fmt vet lint migrate-up migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-palace migrate-up-telegram migrate-up-closet migrate-down-closet migrate-down migrate-down-chat migrate-down-releases migrate-down-github migrate-down-jobradar migrate-down-palace migrate-down-telegram migrate-version migrate-create openapi-gen swagger ci ci-fast backup restore
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -86,8 +86,9 @@ METATHREADS_MIGRATE_TABLE := schema_migrations_metathreads
 PALACE_MIGRATE_TABLE := schema_migrations_palace
 TELEGRAM_MIGRATE_TABLE := schema_migrations_telegram
 IDENTITY_MIGRATE_TABLE := schema_migrations_identity
+CLOSET_MIGRATE_TABLE := schema_migrations_closet
 
-migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads migrate-up-palace migrate-up-telegram migrate-up-identity ## apply pending migrations (all modules)
+migrate-up: migrate-up-finance migrate-up-chat migrate-up-releases migrate-up-github migrate-up-jobradar migrate-up-threads migrate-up-metathreads migrate-up-palace migrate-up-telegram migrate-up-identity migrate-up-closet ## apply pending migrations (all modules)
 
 migrate-up-finance: ## apply pending finance migrations
 	$(MIGRATE) -dir migrations/finance up
@@ -133,6 +134,13 @@ migrate-up-telegram: ## apply pending telegram integration migrations
 migrate-up-identity: ## apply pending identity migrations
 	$(MIGRATE) -dir migrations/identity -table $(IDENTITY_MIGRATE_TABLE) up
 
+# Closet, the operator's wardrobe. Its `assets` table holds image BYTES,
+# which makes this the one schema whose loss is not recoverable from
+# anywhere else: nothing re-derives a cut-out PNG. See the header of
+# migrations/closet/0001_init.up.sql.
+migrate-up-closet: ## apply pending closet migrations
+	$(MIGRATE) -dir migrations/closet -table $(CLOSET_MIGRATE_TABLE) up
+
 migrate-down: ## revert one finance migration
 	$(MIGRATE) -dir migrations/finance -step 1 down
 
@@ -160,6 +168,13 @@ migrate-down-palace: ## revert one palace migration
 migrate-down-telegram: ## revert one telegram integration migration
 	$(MIGRATE) -dir migrations/telegram -table $(TELEGRAM_MIGRATE_TABLE) -step 1 down
 
+# Reverting this one DROPS closet.assets, and with it the only copy of
+# every photograph in the wardrobe. It exists for symmetry with the other
+# modules and for a freshly created schema; on a populated database the
+# recovery path is `make restore`, not this.
+migrate-down-closet: ## revert one closet migration
+	$(MIGRATE) -dir migrations/closet -table $(CLOSET_MIGRATE_TABLE) -step 1 down
+
 migrate-version: ## show migration version for every module
 	@printf "finance  "; $(MIGRATE) -dir migrations/finance version
 	@printf "chat     "; $(MIGRATE) -dir migrations/chat -table $(CHAT_MIGRATE_TABLE) version
@@ -170,9 +185,10 @@ migrate-version: ## show migration version for every module
 	@printf "metathreads "; $(MIGRATE) -dir migrations/metathreads -table $(METATHREADS_MIGRATE_TABLE) version
 	@printf "palace   "; $(MIGRATE) -dir migrations/palace -table $(PALACE_MIGRATE_TABLE) version
 	@printf "telegram "; $(MIGRATE) -dir migrations/telegram -table $(TELEGRAM_MIGRATE_TABLE) version
+	@printf "closet   "; $(MIGRATE) -dir migrations/closet -table $(CLOSET_MIGRATE_TABLE) version
 
 migrate-create: ## create migration: make migrate-create name=add_x [MODULE=chat]
-	@test -n "$(name)" || (echo "usage: make migrate-create name=<name> [MODULE=finance|chat|releases|github|jobradar|threads|metathreads|palace|telegram]"; exit 1)
+	@test -n "$(name)" || (echo "usage: make migrate-create name=<name> [MODULE=finance|chat|releases|github|jobradar|threads|metathreads|palace|telegram|closet]"; exit 1)
 	@ts=$$(date -u +%Y%m%d%H%M%S); \
 	  touch migrations/$(MODULE)/$${ts}_$(name).up.sql; \
 	  touch migrations/$(MODULE)/$${ts}_$(name).down.sql; \
