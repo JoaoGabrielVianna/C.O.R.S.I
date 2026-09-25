@@ -26,6 +26,7 @@ no instante em que executa.
 | **Finance** | ledger em centavos, com contrato de totais congelado | `1.1.0` |
 | **Threads** | ideias e rascunhos, operados pelo chat | `1.0.0` |
 | **Job Radar** | pipeline de oportunidades | `1.0.0` |
+| **Closet** | guarda-roupa real e montador de looks, sem agente | `C1` |
 | **GitHub** | integração de leitura | ativa |
 | **Meta Threads** | integração de leitura | congelada por decisão |
 
@@ -53,7 +54,7 @@ heurística procurando números na prosa. O receipt vem da execução ou não ve
 ## Arquitetura
 
 ```text
-MODULES        Agents · Finance · Threads · Job Radar
+MODULES        Agents · Finance · Threads · Job Radar · Closet
 INTEGRATIONS   camada de adaptação com sistemas e formatos externos
 PLATFORM       capacidades técnicas compartilhadas
 ```

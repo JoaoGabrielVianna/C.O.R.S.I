@@ -10,10 +10,10 @@ Monolito modular. Go 1.25, arquitetura hexagonal, packed by feature.
 
 ## O que é
 
-Um binário HTTP (`cmd/corsi`) que monta **nove bounded contexts** e uma camada de plataforma
+Um binário HTTP (`cmd/corsi`) que monta **dez bounded contexts** e uma camada de plataforma
 compartilhada. Cada um tem schema e timeline de migration próprios: `finance`, `chat`,
-`releases`, `jobradar`, `threads`, `palace`, e as integrações `github`, `metathreads` e
-`telegram`.
+`releases`, `jobradar`, `threads`, `palace`, `closet`, e as integrações `github`,
+`metathreads` e `telegram`.
 
 Os dois maiores:
 
@@ -134,7 +134,7 @@ re-wrap de envelope.
 Uma timeline por bounded context, com **tabela de versão própria**.
 
 ```bash
-make migrate-up            # aplica as nove timelines
+make migrate-up            # aplica as onze timelines
 make migrate-up-finance
 make migrate-up-chat
 make migrate-version       # imprime a versão de cada timeline
@@ -148,8 +148,9 @@ para outro lugar faria o golang-migrate ler um banco populado como versão 0.
 > com `-table`. Omitir faz o runner ler a tabela do `finance`, encontrar uma versão alta e
 > concluir que não há nada a aplicar.
 
-**Execução no start do contêiner:** `deploy/entrypoint.sh` aplica **as nove timelines**, uma
-invocação por contexto. `set -e` está ativo e cada invocação é guardada, então uma migração
+**Execução no start do contêiner:** `deploy/entrypoint.sh` aplica **as onze timelines**, uma
+invocação por contexto — as dez acima mais `identity`, que é uma capacidade de plataforma e
+não um bounded context, e ainda assim tem timeline própria. `set -e` está ativo e cada invocação é guardada, então uma migração
 que falha **mata o contêiner** em vez de servir um schema que ele não tem.
 
 Política: **forward-only** em banco populado. Os `down.sql` existem para testes e CI em banco
