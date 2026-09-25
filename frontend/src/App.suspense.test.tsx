@@ -86,15 +86,23 @@ describe("Suspense topology", () => {
     // That trades a 300ms gap for a permanently larger initial bundle, and
     // it is not what this slice did. The `lazy()` calls moved to
     // `lib/lazyRoutes` when the preloader needed to name the same imports;
-    // they are still six, and they are still dynamic.
+    // they are still dynamic.
+    //
+    // The number is the count of lazy pages and it MOVES when a module is
+    // added — it was six before the Closet. What the assertion is really
+    // for is the pairing below it: every `lazy()` must be backed by an
+    // `import()`, because a `lazy()` wrapping a static import is the one
+    // way to look lazy and ship eagerly.
     const registry = code(lazyRoutesSource);
-    expect((registry.match(/lazy\(\(\) =>/g) ?? []).length).toBe(6);
-    expect((registry.match(/=> import\(/g) ?? []).length).toBe(6);
+    const lazyCalls = (registry.match(/lazy\(\(\) =>/g) ?? []).length;
+    const dynamicImports = (registry.match(/=> import\(/g) ?? []).length;
+    expect(lazyCalls).toBe(7);
+    expect(dynamicImports).toBe(lazyCalls);
 
     const app = code(appSource);
     expect(app, "the router must not declare a boundary again").not.toContain("<Suspense");
     expect(app, "a page must not be imported statically").not.toMatch(
-      /^import .*from "@\/pages\/app\/modules\/(finance|agents|palace|job-radar)"/m,
+      /^import .*from "@\/pages\/app\/modules\/(finance|agents|palace|job-radar|closet)"/m,
     );
   });
 });

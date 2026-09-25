@@ -11,6 +11,7 @@ import {
   Landmark,
   LayoutDashboard,
   Radar,
+  Shirt,
   Sparkles,
   Wallet,
   X,
@@ -165,6 +166,7 @@ function Sections({
     { to: "/app/modules/finance",   label: t.app.sidebar.items.finance,  icon: Wallet },
     { to: "/app/modules/agents",    label: t.app.sidebar.items.agents,   icon: Bot },
     { to: "/app/modules/palace",    label: t.app.sidebar.items.palace,   icon: Landmark },
+    { to: "/app/modules/closet",    label: t.app.sidebar.items.closet,   icon: Shirt },
     { to: "/app/modules/news",      label: t.app.sidebar.items.intelligence, icon: BarChart3, upcoming: true },
     { to: "/app/modules/content",   label: t.app.sidebar.items.content,  icon: Sparkles, upcoming: true },
   ];

@@ -37,6 +37,11 @@ const API_PREFIXES = [
   // third time: the Library rendered "não foi possível carregar" while
   // the backend served the routes correctly.
   '/palace',
+  // The Closet. It owns `/closet/assets/{id}`, which returns image BYTES,
+  // so a missing prefix here fails in a way the other four did not: the
+  // JSON reads would break loudly, and every `<img>` would silently render
+  // an HTML page as a broken picture.
+  '/closet',
   // Authentication. Missing it would make `npm run dev` unable to log in
   // at all — the login POST would receive index.html — which is the same
   // drift that cost Releases, Job Radar and Palace, on the one prefix

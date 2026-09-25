@@ -46,6 +46,7 @@ const loadJobRadar = () => import("@/pages/app/modules/job-radar");
 const loadFinance = () => import("@/pages/app/modules/finance");
 const loadAgents = () => import("@/pages/app/modules/agents");
 const loadPalace = () => import("@/pages/app/modules/palace");
+const loadCloset = () => import("@/pages/app/modules/closet");
 const loadReleases = () => import("@/pages/app/releases");
 const loadPersonDetail = () => import("@/pages/app/PersonDetail");
 
@@ -58,6 +59,9 @@ export const FinancePage = lazy(() => loadFinance().then((m) => ({ default: m.Fi
 // chunk still covers all of it.
 export const AgentsPage = lazy(() => loadAgents().then((m) => ({ default: m.AgentsPage })));
 export const PalacePage = lazy(() => loadPalace().then((m) => ({ default: m.PalacePage })));
+// The Closet is a single screen with two panes, so unlike Agents and
+// Palace it declares no nested routes.
+export const ClosetPage = lazy(() => loadCloset().then((m) => ({ default: m.ClosetPage })));
 export const ReleasesPage = lazy(() => loadReleases().then((m) => ({ default: m.ReleasesPage })));
 export const PersonDetailPage = lazy(() =>
   loadPersonDetail().then((m) => ({ default: m.PersonDetailPage })),
@@ -75,6 +79,7 @@ const PRELOADABLE: readonly (readonly [string, () => Promise<unknown>])[] = [
   ["/app/modules/finance", loadFinance],
   ["/app/modules/agents", loadAgents],
   ["/app/modules/palace", loadPalace],
+  ["/app/modules/closet", loadCloset],
   ["/app/releases", loadReleases],
 ];
 

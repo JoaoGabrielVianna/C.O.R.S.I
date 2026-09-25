@@ -12,6 +12,7 @@ import {
   Plug,
   Radar,
   ShieldCheck,
+  Shirt,
   SlidersHorizontal,
   SquareStack,
   Sparkles,
@@ -92,6 +93,7 @@ export function RegisterWorkspaceCommands() {
       mod("mod.jobRadar",     c.openJobRadar,     "/app/modules/job-radar", Radar),
       mod("mod.finance",      c.openFinance,      "/app/modules/finance",   Wallet),
       mod("mod.agents",       c.openAgents,       "/app/modules/agents",    Bot),
+      mod("mod.closet",       c.openCloset,       "/app/modules/closet",    Shirt),
       mod("mod.intelligence", c.openIntelligence, "/app/modules/news",      BarChart3),
       mod("mod.content",      c.openContent,      "/app/modules/content",   Sparkles),
 

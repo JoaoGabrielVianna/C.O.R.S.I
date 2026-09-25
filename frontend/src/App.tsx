@@ -15,6 +15,7 @@ import { IntegrationsSettingsPage } from "@/pages/app/settings/Integrations";
 import { DEFAULT_APP_ROUTE } from "@/lib/navVisibility";
 import {
   AgentsPage,
+  ClosetPage,
   FinancePage,
   JobRadarPage,
   PalacePage,
@@ -76,6 +77,7 @@ import {
  *   `/app/dashboard`                 → Dashboard
  *   `/app/modules/job-radar`         → Job Radar      (lazy chunk)
  *   `/app/modules/finance`           → Finance        (lazy chunk)
+ *   `/app/modules/closet`            → Closet         (lazy chunk)
  *   `/app/modules/agents/*`          → Agents         (lazy chunk, owns its
  *                                      own routes — see the module's index)
  *   `/app/modules/news`              → Market Intelligence
@@ -113,6 +115,9 @@ function App() {
                   the app shell. One lazy chunk still covers all of it. */}
               <Route path="agents/*"  element={<AgentsPage />} />
               <Route path="palace/*"  element={<PalacePage />} />
+              {/* One screen, two panes: the look being built and the
+                  wardrobe it is built from. No nested routes. */}
+              <Route path="closet"    element={<ClosetPage />} />
               <Route path="news"      element={<IntelligencePage />} />
               <Route path="content"   element={<ContentPage />} />
             </Route>
