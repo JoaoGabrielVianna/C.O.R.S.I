@@ -114,6 +114,17 @@ func login(t *testing.T, r http.Handler, email, password string) *http.Response 
 	return w.Result()
 }
 
+// loginCookie logs in and returns the session cookie, closing the response
+// body that every caller of it would otherwise have to remember to close.
+// The cookies are already parsed off the response by the time it returns, so
+// nothing here needs the body.
+func loginCookie(t *testing.T, r http.Handler, email, password string) *http.Cookie {
+	t.Helper()
+	res := login(t, r, email, password)
+	defer res.Body.Close()
+	return sessionCookie(t, res)
+}
+
 func sessionCookie(t *testing.T, res *http.Response) *http.Cookie {
 	t.Helper()
 	for _, c := range res.Cookies() {
@@ -208,6 +219,7 @@ func TestCorrectCredentialAuthenticatesAndCookieIsHardened(t *testing.T) {
 	r := router(svc)
 
 	res := login(t, r, testEmail, testPassword)
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d, want 200", res.StatusCode)
 	}
@@ -251,6 +263,7 @@ func TestWrongPasswordAndWrongEmailAreIndistinguishable(t *testing.T) {
 			// 401 into a 429 and hides the property under test.
 			svc, _ = newTestService(t)
 			res := login(t, router(svc), tc.email, tc.password)
+			defer res.Body.Close()
 			if res.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want 401", res.StatusCode)
 			}
@@ -269,6 +282,7 @@ func TestWrongPasswordAndWrongEmailAreIndistinguishable(t *testing.T) {
 func TestEmailComparisonIgnoresCaseAndSurroundingSpace(t *testing.T) {
 	svc, _ := newTestService(t)
 	res := login(t, router(svc), "  "+strings.ToUpper(testEmail)+"  ", testPassword)
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 — an address is not case sensitive", res.StatusCode)
 	}
@@ -279,11 +293,17 @@ func TestRateLimitRefusesAfterRepeatedFailures(t *testing.T) {
 	r := router(svc)
 
 	for i := 0; i < maxAttempts; i++ {
-		if res := login(t, r, testEmail, "wrong"); res.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("attempt %d = %d, want 401", i+1, res.StatusCode)
+		// Closed inside the loop rather than deferred: a deferred close
+		// here would hold every response until the test returns.
+		res := login(t, r, testEmail, "wrong")
+		status := res.StatusCode
+		res.Body.Close()
+		if status != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", i+1, status)
 		}
 	}
 	res := login(t, r, testEmail, "wrong")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("attempt %d = %d, want 429", maxAttempts+1, res.StatusCode)
 	}
@@ -293,8 +313,10 @@ func TestRateLimitRefusesAfterRepeatedFailures(t *testing.T) {
 	// And the correct password does not get through the lockout either: a
 	// limiter that exempts the right answer is a limiter that confirms the
 	// right answer.
-	if res := login(t, r, testEmail, testPassword); res.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("correct credential during lockout = %d, want 429", res.StatusCode)
+	locked := login(t, r, testEmail, testPassword)
+	defer locked.Body.Close()
+	if locked.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("correct credential during lockout = %d, want 429", locked.StatusCode)
 	}
 }
 
@@ -314,7 +336,7 @@ func authedGet(t *testing.T, r http.Handler, path string, c *http.Cookie) *httpt
 func TestSessionGrantsAccessAndSurvivesRepeatedRequests(t *testing.T) {
 	svc, _ := newTestService(t)
 	r := router(svc)
-	c := sessionCookie(t, login(t, r, testEmail, testPassword))
+	c := loginCookie(t, r, testEmail, testPassword)
 
 	// Twice, because "refresh keeps the session" is the property and a
 	// single-use token would pass a one-shot assertion.
@@ -331,7 +353,7 @@ func TestSessionGrantsAccessAndSurvivesRepeatedRequests(t *testing.T) {
 func TestLogoutRevokesServerSideNotJustTheCookie(t *testing.T) {
 	svc, store := newTestService(t)
 	r := router(svc)
-	c := sessionCookie(t, login(t, r, testEmail, testPassword))
+	c := loginCookie(t, r, testEmail, testPassword)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	req.AddCookie(c)
@@ -383,7 +405,7 @@ func TestExpiredSessionIsRefused(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	r := router(svc)
-	c := sessionCookie(t, login(t, r, testEmail, testPassword))
+	c := loginCookie(t, r, testEmail, testPassword)
 
 	if w := authedGet(t, r, "/finance/summary", c); w.Code != http.StatusOK {
 		t.Fatalf("fresh session = %d, want 200", w.Code)
@@ -421,7 +443,7 @@ func TestForgedAndMalformedCookiesAreRefused(t *testing.T) {
 func TestStoreFailureDeniesRatherThanAdmits(t *testing.T) {
 	svc, store := newTestService(t)
 	r := router(svc)
-	c := sessionCookie(t, login(t, r, testEmail, testPassword))
+	c := loginCookie(t, r, testEmail, testPassword)
 
 	store.failNext = true
 	if w := authedGet(t, r, "/finance/summary", c); w.Code != http.StatusUnauthorized {
@@ -464,7 +486,7 @@ func TestInsecureCookieModeIsOptInAndRenamesTheCookie(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	c := sessionCookie(t, login(t, router(svc), testEmail, testPassword))
+	c := loginCookie(t, router(svc), testEmail, testPassword)
 	if c.Name != CookieNameInsecure {
 		t.Errorf("cookie name = %q, want the un-prefixed dev name", c.Name)
 	}
