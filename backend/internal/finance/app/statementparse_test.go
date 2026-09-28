@@ -172,7 +172,7 @@ func TestDirectionComesFromTheSign(t *testing.T) {
 	lines, _ := parseCSV("date,description,amount\n" +
 		"2026-08-05,SALARIO,8000.00\n" +
 		"2026-08-06,MERCADO,-50.00\n")
-	if string(*&lines[0].Direction) != "income" {
+	if string(lines[0].Direction) != "income" {
 		t.Errorf("positive amount = %s, want income", lines[0].Direction)
 	}
 	if string(lines[1].Direction) != "expense" {
