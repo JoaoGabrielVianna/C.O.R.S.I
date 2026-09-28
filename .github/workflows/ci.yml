@@ -1,0 +1,80 @@
+# Backend gate for C.O.R.S.I.
+#
+# Until this file existed there was no remote CI at all: `make -C backend ci`
+# was the gate, and it ran only when a human remembered to run it. That is
+# fine for the suites that need Docker and a throwaway Postgres, and it is
+# not fine for the checks that need nothing but the source, which is most of
+# them — including the architecture test, whose whole purpose is to catch a
+# dependency nobody intended to add.
+#
+# Scope, stated so the green check is not read as more than it is: this runs
+# the checks that need no database. The integration suites are guarded by
+# //go:build integration, they drop and recreate a schema, and they stay with
+# `make -C backend ci`. What this does guarantee about them is that they still
+# compile, which is the failure mode of a suite that only runs by hand.
+#
+# The frontend is not covered here yet.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Paths here are resolved from the repository root; `defaults.run`
+          # only applies to `run` steps.
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # A //go:build integration file is invisible to every step above, so
+      # the largest tests in the repository can stop compiling without any
+      # gate noticing until someone runs them with Docker. This compiles
+      # them without running them.
+      - name: Vet (integration build tag)
+        run: go vet -tags=integration ./...
+
+      # Runs as its own named step so that a layering violation shows up in
+      # the checks list as "Architecture" rather than as one line inside a
+      # full test run. It is executed again by the Test step below; the
+      # duplicate costs under a second and buys a legible failure.
+      - name: Architecture
+        run: go test ./internal/ -run 'TestBoundedContextsDoNotImportEachOther|TestPlatformDependsOnNoModule' -v
+
+      - name: Test
+        run: go test ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          # Pinned rather than floating: a linter that changes its mind
+          # between two runs of the same commit is a gate that fails for
+          # reasons unrelated to the change under review.
+          version: v2.12.2
+          working-directory: backend

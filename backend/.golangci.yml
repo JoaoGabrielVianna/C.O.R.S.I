@@ -1,0 +1,68 @@
+# golangci-lint configuration for the C.O.R.S.I. backend.
+#
+# Deliberately small. The point of adopting a linter here is to have CI
+# enforce the things that were already being done by hand; it is not to
+# adopt an opinion about style that nobody has agreed to. Every linter
+# below either finds a real defect or finds dead code.
+#
+# `make lint` predates this file and aliases to `go vet`. The CI workflow
+# runs both, because vet and staticcheck do not cover the same ground.
+
+version: "2"
+
+run:
+  # Integration suites are guarded by //go:build integration and are
+  # invisible to a default build, which would leave the largest tests in
+  # the repository unlinted.
+  build-tags:
+    - integration
+  timeout: 5m
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # An unclosed response body leaks a connection. This repository talks
+    # to LiteLLM, GitHub and Meta over HTTP on every agent turn.
+    - bodyclose
+    # rows.Err() after a pgx loop: skipping it turns a failed scan into a
+    # silently short result set, which in Finance is a wrong total rather
+    # than an error.
+    - rowserrcheck
+  settings:
+    staticcheck:
+      # SA is the bug-finding half of staticcheck and is what is wanted
+      # here. QF and ST are refactoring and style suggestions ("could
+      # apply De Morgan's law", "could omit type"); they are opinions
+      # about code that is already correct, and a gate that fails on
+      # them teaches people to stop reading the gate.
+      checks:
+        - all
+        - -QF*
+        - -ST*
+    govet:
+      disable:
+        # Same reasoning: a constant that could be inlined is not a bug.
+        - inline
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers assert on failure paths instead of returning them, so
+      # an unchecked error in a _test.go file is usually a t.Fatal away
+      # rather than a defect.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+issues:
+  # Defaults truncate to 3 occurrences of the same message and 50 per
+  # linter. A gate that hides findings is worse than no gate: it reports a
+  # small number, the number is fixed, and the next run reveals more of the
+  # same thing. Report everything.
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+formatters:
+  enable:
+    - gofmt
