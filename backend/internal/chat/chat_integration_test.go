@@ -218,6 +218,14 @@ func withProductionRouter(timeout time.Duration) envOption {
 
 // withReferenceResolvers supplies entity resolvers the same way the
 // composition root does.
+//
+// Unused today, and kept rather than deleted: envConfig already carries the
+// field and the env already wires it, so what is missing is a test that
+// drives hydration through the real turn loop from this side. Reference
+// resolution is covered from the module side only. Deleting the helper would
+// remove the marker without closing the gap.
+//
+//nolint:unused // no chat integration test drives reference hydration yet, see #2
 func withReferenceResolvers(rs ...ports.ContextReferenceResolver) envOption {
 	return func(c *envConfig) { c.referenceResolvers = append(c.referenceResolvers, rs...) }
 }
