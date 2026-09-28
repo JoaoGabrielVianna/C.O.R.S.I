@@ -79,7 +79,15 @@ func main() {
 		slog.Error("init migrate", "err", err)
 		os.Exit(1)
 	}
-	defer m.Close()
+	// Close reports the source error and the database error separately;
+	// neither changes the exit status, because by the time it runs the
+	// migration has already succeeded or already exited non-zero. It is
+	// logged so a leaked connection has somewhere to show up.
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			slog.Warn("closing migrate", "source", srcErr, "database", dbErr)
+		}
+	}()
 
 	cmd := args[0]
 	switch cmd {
