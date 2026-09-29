@@ -21,6 +21,12 @@ dist/
 coverage/
 *.log
 
+# Binário de `go build ./cmd/closetstd`, 13 MB, deixado na raiz do backend.
+# Ancorado no caminho exato de propósito: um padrão solto `closetstd`
+# esconderia também `backend/cmd/closetstd/`, que é o código-fonte e tem de
+# continuar versionado.
+/backend/closetstd
+
 # ─── material interno e contexto de desenvolvimento ─────────────────
 # Estas regras estavam apenas em .git/info/exclude, que é local e não
 # sobrevive a um clone. Uma máquina nova clonava o repositório sem
